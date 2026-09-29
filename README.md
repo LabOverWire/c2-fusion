@@ -23,7 +23,9 @@ The exchange and convergence layer this builds on is existing LabOverWire work:
 
 ## Status
 
-Present: the canonical model, the codec layer with two formats, the codec-bounded stitch-p2p exchange (wire format in, shared picture out, re-exportable to any format) with convergence across a partition, and the emulation harness. Next: run the exchange over QUIC inside the netem harness with real bearer profiles.
+Present: the canonical model, the codec layer with two formats, the codec-bounded stitch-p2p exchange (wire format in, shared picture out, re-exportable to any format) with convergence across a partition, convergence over a real QUIC connection by direct dial, and the emulation harness. Next: containerize the node and run the QUIC exchange across the netem harness under bearer profiles.
+
+The QUIC path uses direct dial to a known address (`QuicEndpoint::connect`), not peer discovery. It carries no STUN and no UDP hole-punching, so it works inside a container bridge network where hole-punching does not. Netem loss is only trustworthy with UDP segmentation offload disabled; bandwidth and delay are unaffected.
 
 ## Build
 

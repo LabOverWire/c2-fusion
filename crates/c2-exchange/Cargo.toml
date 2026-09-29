@@ -14,3 +14,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "sync"] }
+mqp2p = { path = "../../../stitch-rs/crates/mqp2p" }
