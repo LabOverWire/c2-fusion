@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 c2-model = { path = "../c2-model" }
+c2-codec = { path = "../c2-codec" }
 stitch-p2p = { path = "../../../stitch-rs/crates/stitch-p2p", default-features = false, features = ["store"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
