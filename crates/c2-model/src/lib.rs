@@ -25,6 +25,16 @@ pub enum C2Message {
     Rfi(Rfi),
 }
 
+impl C2Message {
+    pub fn id(&self) -> &str {
+        match self {
+            C2Message::ContactReport(m) => &m.id,
+            C2Message::Sitrep(m) => &m.id,
+            C2Message::Rfi(m) => &m.id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContactReport {
     pub id: String,

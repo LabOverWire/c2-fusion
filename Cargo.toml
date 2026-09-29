@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/c2-model", "crates/c2-codec"]
+members = ["crates/c2-model", "crates/c2-codec", "crates/c2-exchange"]
 
 [workspace.package]
 version = "0.1.0"

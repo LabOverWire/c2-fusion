@@ -1,0 +1,15 @@
+[package]
+name = "c2-exchange"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+c2-model = { path = "../c2-model" }
+stitch-p2p = { path = "../../../stitch-rs/crates/stitch-p2p", default-features = false, features = ["store"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "sync"] }

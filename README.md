@@ -10,6 +10,7 @@ A canonical, format-independent C2 message model with a pluggable codec layer. M
 
 - `crates/c2-model`: the canonical model. Contact report, situation report, and request for information, each tagged with an operational domain and functional service.
 - `crates/c2-codec`: the `Codec` trait, a registry, and two working codecs. `mtf-xml` (an XML Message Text Format representation, in the family of NATO APP-11 XML-MTF) and `niem-json` (a NIEM-style JSON exchange). Both round-trip the same canonical message, which is what proves the format-agnostic claim.
+- `crates/c2-exchange`: maps a C2 message onto the stitch-p2p document store and projects the converged store back into a shared C2 picture. Integration tests exchange messages between two nodes over a pipe and show the picture converges, including after a link partition and rejoin.
 - `harness/`: the DDIL emulation environment. Three Linux containers on a shared network, with `tc`/`netem` bearer profiles for HF, UHF, and SATCOM, used to exercise the exchange under degraded and partitioned links.
 
 ## Substrate (separate repositories)
@@ -22,7 +23,7 @@ The exchange and convergence layer this builds on is existing LabOverWire work:
 
 ## Status
 
-Present: the canonical model, the codec layer with two formats, round-trip tests, and the emulation harness. Next in the build phase: wiring the codec output through stitch-p2p across the harness nodes and demonstrating convergence of the shared picture under emulated bearer conditions.
+Present: the canonical model, the codec layer with two formats, the stitch-p2p exchange with shared-picture convergence across a partition, round-trip and convergence tests, and the emulation harness. Next: run the exchange between nodes over QUIC inside the netem harness with real bearer profiles, and connect a codec at the ingest boundary so messages arrive in a wire format and leave as the shared picture.
 
 ## Build
 
