@@ -1,0 +1,1 @@
+<c2message><message_type>ContactReport</message_type><id>C-1</id><reporting_unit>UAV-7</reporting_unit><domain>Air</domain><service>Intelligence</service><observed_at>2026-09-29T14:30:00Z</observed_at><latitude>49.2827</latitude><longitude>-123.1207</longitude><description>Vehicle stationary</description></c2message>

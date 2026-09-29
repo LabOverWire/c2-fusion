@@ -1,0 +1,17 @@
+[package]
+name = "c2-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "c2-node"
+path = "src/main.rs"
+
+[dependencies]
+c2-codec = { path = "../c2-codec" }
+c2-exchange = { path = "../c2-exchange" }
+stitch-p2p = { path = "../../../stitch-rs/crates/stitch-p2p", default-features = false, features = ["store"] }
+mqp2p = { path = "../../../stitch-rs/crates/mqp2p" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "net", "fs", "signal"] }

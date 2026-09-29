@@ -1,38 +1,45 @@
 # DDIL emulation harness
 
-Emulates contested tactical-bearer conditions so the message exchange can be exercised under Denied, Degraded, Intermittent, and Low-bandwidth (DDIL) links without physical RF equipment. This is the experimentation and simulation environment referenced in the challenge's essential outcomes.
+Runs the c2-fusion node as three containers on a Docker bridge and demonstrates the shared C2 picture converging over real QUIC, then reconverging after a network partition with a write injected during the outage. This is the experimentation and simulation environment the challenge's essential outcomes call for, standing in for physical RF.
 
-## Why containers
+## What it shows
 
-`tc`/`netem` is Linux-only and needs `NET_ADMIN`. The development host is macOS, so the three nodes run as Linux containers on a shared bridge network. Each container applies a bearer profile to its own interface, so a node's uplink can be shaped or dropped independently.
+`./run.sh` builds the node image and drives the full sequence end to end:
 
-## Nodes
+1. Bring up a ring: edge -> relay -> hq -> edge. Each node ingests one message in a wire format (edge in MTF-XML, relay and hq in NIEM-JSON) and replicates over QUIC.
+2. Converge: all three nodes reach the same 3-message picture.
+3. Partition: disconnect edge from the network.
+4. Inject: drop a new contact into edge's inbox while it is isolated. Edge ingests it locally (count 4); HQ correctly still shows 3.
+5. Heal and reconverge: reconnect edge; all three nodes reach the same 4-message picture.
 
-- `node-edge`: the forward node that originates a contact/spot report (the drone/ISR operator in the demo scenario).
-- `node-relay`: an intermediate relay.
-- `node-hq`: the command post rendering the shared C2 picture.
-
-## Bearer profiles
-
-`netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies one profile. The rate, delay, and loss values are placeholders. They are refined once real HF/UHF/SATCOM figures are gathered in the reading track (see `../../BuyCanadian/rd-poc-scope.md`).
-
-| Profile | Rate | Delay | Loss |
-|---|---|---|---|
-| hf | 2400 bit/s | 250 ms +/- 100 ms | 15% |
-| uhf | 64 kbit/s | 40 ms +/- 15 ms | 3% |
-| satcom | 256 kbit/s | 300 ms +/- 40 ms | 1% |
-
-## Usage
+Last run (2026-09-29):
 
 ```
-docker compose up -d
-docker exec c2-node-edge bash /opt/netem-profiles.sh eth0 hf
-# exercise the exchange, then simulate a denied link:
-docker network disconnect harness_tactical c2-node-edge   # partition
-docker network connect harness_tactical c2-node-edge      # rejoin; picture converges
-docker compose down
+c2-edge converged to 3
+c2-relay converged to 3
+c2-hq converged to 3
+edge ingested C-2 locally (count=4) while isolated
+confirmed: hq still count=3, C-2 not yet propagated
+c2-edge reconverged to 4
+c2-relay reconverged to 4
+c2-hq reconverged to 4
+DEMO PASSED: converge, degrade, partition, inject, reconverge
 ```
 
-## What runs on the nodes
+## Why direct QUIC dial
 
-Currently the nodes are bare Debian containers used to validate the profiles and partition behaviour. The exchange binary (codec plus stitch-p2p sync) is added here in the build phase; the convergence guarantee it relies on is machine-checked in the stitch-p2p TLA+ specs (`InvConvergence`).
+The node connects with `QuicEndpoint::connect` to a known address, fingerprint-pinned, with no STUN and no UDP hole-punching. Hole-punching (mqp2p's `Peer`/`Swarm` path) fails inside virtualized and container networks; direct dial does not, because containers on one bridge have known addresses and no NAT between them. Nodes exchange fingerprints and advertise addresses through files on a shared volume, so no signaling broker is needed.
+
+## Transport and bearer shaping
+
+- Partition and rejoin (denied/intermittent) use `docker network disconnect`/`connect` and need no netem.
+- Bandwidth and delay (degraded/low-bandwidth) use `tc`/`netem` `rate` and `delay`. The `run.sh` step applies a profile only if the image carries `iproute2`; the slim runtime image built here does not, and the step is skipped. To exercise shaping, build a node image with `iproute2` present (needs network access at image-build time).
+- Loss is deliberately not scripted: netem drops whole GSO super-buffers and clusters QUIC loss (the artifact behind the withdrawn MQTT-over-QUIC paper). Trust netem loss only with UDP segmentation offload disabled.
+
+## Run it
+
+```
+./run.sh
+```
+
+Requires Docker. The script builds `c2-node:poc` from a temporary staging context (the two sibling stitch-rs crates plus c2-fusion, no target dirs), brings the ring up, runs the demo, and tears everything down.

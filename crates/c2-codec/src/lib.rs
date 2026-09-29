@@ -13,7 +13,7 @@ pub enum CodecError {
     Unsupported(String),
 }
 
-pub trait Codec {
+pub trait Codec: Send + Sync {
     fn wire_format(&self) -> &'static str;
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError>;
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError>;
