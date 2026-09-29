@@ -1,0 +1,12 @@
+[package]
+name = "c2-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+c2-model = { path = "../c2-model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

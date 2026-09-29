@@ -1,0 +1,37 @@
+services:
+  node-edge:
+    image: debian:bookworm-slim
+    container_name: c2-node-edge
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+    networks:
+      - tactical
+    volumes:
+      - ./netem-profiles.sh:/opt/netem-profiles.sh:ro
+
+  node-relay:
+    image: debian:bookworm-slim
+    container_name: c2-node-relay
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+    networks:
+      - tactical
+    volumes:
+      - ./netem-profiles.sh:/opt/netem-profiles.sh:ro
+
+  node-hq:
+    image: debian:bookworm-slim
+    container_name: c2-node-hq
+    cap_add:
+      - NET_ADMIN
+    command: ["sleep", "infinity"]
+    networks:
+      - tactical
+    volumes:
+      - ./netem-profiles.sh:/opt/netem-profiles.sh:ro
+
+networks:
+  tactical:
+    driver: bridge
