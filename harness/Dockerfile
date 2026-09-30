@@ -10,9 +10,12 @@ COPY c2-fusion c2-fusion
 WORKDIR /build/c2-fusion
 RUN cargo build --release -p c2-node
 
-# Runtime needs only glibc: QUIC uses fingerprint-pinned TLS (no CA store) and
-# the core demo (partition/rejoin) needs no tc. netem shaping is applied only if
-# the image happens to carry iproute2; the orchestration script skips it if not.
+# Runtime: iproute2 provides tc/netem for bearer shaping (rate/delay/loss). QUIC
+# uses fingerprint-pinned TLS, so no CA store is required for the exchange itself;
+# ca-certificates is included for general robustness.
 FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/c2-fusion/target/release/c2-node /usr/local/bin/c2-node
 ENTRYPOINT ["/usr/local/bin/c2-node"]

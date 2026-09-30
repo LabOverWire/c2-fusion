@@ -8,10 +8,10 @@ repository.workspace = true
 [dependencies]
 c2-model = { path = "../c2-model" }
 c2-codec = { path = "../c2-codec" }
-stitch-p2p = { path = "../../../stitch-rs/crates/stitch-p2p", default-features = false, features = ["store"] }
+stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "sync"] }
-mqp2p = { path = "../../../stitch-rs/crates/mqp2p" }
+mqp2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "mqp2p" }

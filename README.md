@@ -11,7 +11,7 @@ A canonical, format-independent C2 message model with a pluggable codec layer. M
 - `crates/c2-model`: the canonical model. Contact report, situation report, and request for information, each tagged with an operational domain and functional service.
 - `crates/c2-codec`: the `Codec` trait, a registry, and two working codecs. `mtf-xml` (an XML Message Text Format representation, in the family of NATO APP-11 XML-MTF) and `niem-json` (a NIEM-style JSON exchange). Both round-trip the same canonical message, which is what proves the format-agnostic claim.
 - `crates/c2-exchange`: the ingest and egress boundary. A wire-format message is decoded by a codec and published to the stitch-p2p store; the converged store projects back into a shared C2 picture that can be re-exported in any codec's format. Integration tests show two nodes receiving different wire formats converge to one picture, that picture re-exports in a single format, and the picture reconverges after a link partition and rejoin.
-- `harness/`: the DDIL emulation environment. Three Linux containers on a shared network, with `tc`/`netem` bearer profiles for HF, UHF, and SATCOM, used to exercise the exchange under degraded and partitioned links.
+- `harness/`: the DDIL emulation environment. Three Linux containers on a shared network. The demo shows partition and rejoin (denied/intermittent) and applies a `tc`/`netem` rate and delay profile (degraded/low-bandwidth) that the shared picture holds under. Loss shaping is not scripted: `netem` drops whole segmentation-offload buffers, so a valid loss figure needs UDP GSO disabled first. The HF/UHF/SATCOM profile values are placeholders pending real figures.
 
 ## Substrate (separate repositories)
 
@@ -23,7 +23,7 @@ The exchange and convergence layer this builds on is existing LabOverWire work:
 
 ## Status
 
-Present: the canonical model, the codec layer with two formats, the codec-bounded stitch-p2p exchange (wire format in, shared picture out, re-exportable to any format), convergence over a real QUIC connection by direct dial, and a containerized 3-node harness (`crates/c2-node` plus `harness/`) that converges over QUIC and reconverges after a network partition with a write injected during the outage. Next: a node image carrying iproute2 to demonstrate netem rate/delay shaping, and loss with UDP GSO disabled, capturing convergence latency per bearer profile.
+Present: the canonical model, the codec layer with two formats, the codec-bounded stitch-p2p exchange (wire format in, shared picture out, re-exportable to any format), convergence over a real QUIC connection by direct dial, and a containerized 3-node harness (`crates/c2-node` plus `harness/`) that converges over QUIC, holds the shared picture under a `netem` rate and delay profile, and reconverges after a network partition with a write injected during the outage. Next: loss shaping with UDP GSO disabled, and capturing convergence latency per bearer profile.
 
 The QUIC path uses direct dial to a known address (`QuicEndpoint::connect`), not peer discovery. It carries no STUN and no UDP hole-punching, so it works inside a container bridge network where hole-punching does not. Netem loss is only trustworthy with UDP segmentation offload disabled; bandwidth and delay are unaffected.
 

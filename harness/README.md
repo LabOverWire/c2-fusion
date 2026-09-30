@@ -33,7 +33,7 @@ The node connects with `QuicEndpoint::connect` to a known address, fingerprint-p
 ## Transport and bearer shaping
 
 - Partition and rejoin (denied/intermittent) use `docker network disconnect`/`connect` and need no netem.
-- Bandwidth and delay (degraded/low-bandwidth) use `tc`/`netem` `rate` and `delay`. The `run.sh` step applies a profile only if the image carries `iproute2`; the slim runtime image built here does not, and the step is skipped. To exercise shaping, build a node image with `iproute2` present (needs network access at image-build time).
+- Bandwidth and delay (degraded/low-bandwidth) use `tc`/`netem` `rate` and `delay`. The runtime image installs `iproute2`, so `run.sh` applies a UHF rate and delay profile to the edge uplink and the shared picture holds under it.
 - Loss is deliberately not scripted: netem drops whole GSO super-buffers and clusters QUIC loss (the artifact behind the withdrawn MQTT-over-QUIC paper). Trust netem loss only with UDP segmentation offload disabled.
 
 ## Run it
