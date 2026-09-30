@@ -127,7 +127,9 @@ mod tests {
         });
         let codec = MtfXmlCodec;
         let bytes = codec.encode(&msg).unwrap();
-        assert!(String::from_utf8_lossy(&bytes).contains("<message_type>ContactReport</message_type>"));
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("<message_type>ContactReport</message_type>")
+        );
         assert_eq!(codec.decode(&bytes).unwrap(), msg);
     }
 

@@ -10,7 +10,7 @@ use std::net::UdpSocket;
 use std::time::Duration;
 
 use c2_exchange::{ingest, picture};
-use c2_model::{ContactReport, C2Message, Domain, FunctionalService, Sitrep};
+use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Sitrep};
 use mqp2p::quic::{generate_self_signed_cert, QuicEndpoint};
 use stitch_p2p::{session, PeerId, Store, PEER_ID_LEN};
 

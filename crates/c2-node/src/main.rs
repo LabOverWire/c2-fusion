@@ -129,7 +129,11 @@ async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
         if let Ok(pic) = picture(&store).await {
             let mut ids: Vec<String> = pic.keys().cloned().collect();
             ids.sort();
-            println!("PICTURE name={name} count={} ids={}", ids.len(), ids.join(","));
+            println!(
+                "PICTURE name={name} count={} ids={}",
+                ids.len(),
+                ids.join(",")
+            );
         }
         sleep(interval).await;
     }

@@ -7,8 +7,8 @@
 use std::time::Duration;
 
 use c2_exchange::{ingest, picture};
-use c2_model::{ContactReport, C2Message, Domain, FunctionalService, Rfi, Sitrep};
-use stitch_p2p::{session, Store, PeerId, PEER_ID_LEN};
+use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Rfi, Sitrep};
+use stitch_p2p::{session, PeerId, Store, PEER_ID_LEN};
 use tokio::io::{split, DuplexStream};
 use tokio::task::JoinHandle;
 

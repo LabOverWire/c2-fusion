@@ -9,7 +9,7 @@ use c2_codec::mtf_xml::MtfXmlCodec;
 use c2_codec::niem::NiemCodec;
 use c2_codec::{Codec, Registry};
 use c2_exchange::{ingest_wire, ingest_wire_with, picture, picture_encoded};
-use c2_model::{ContactReport, C2Message, Domain, FunctionalService, Sitrep};
+use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Sitrep};
 use stitch_p2p::{session, PeerId, Store, PEER_ID_LEN};
 use tokio::io::{split, DuplexStream};
 use tokio::task::JoinHandle;
@@ -123,10 +123,7 @@ async fn two_wire_formats_converge_to_one_picture_and_reexport() {
     let exported = picture_encoded(&edge, &NiemCodec).await.unwrap();
     assert_eq!(exported.len(), 2);
     let contact_json = exported.get("C-1").unwrap();
-    assert_eq!(
-        NiemCodec.decode(contact_json).unwrap(),
-        expected_contact()
-    );
+    assert_eq!(NiemCodec.decode(contact_json).unwrap(), expected_contact());
 }
 
 #[tokio::test]
