@@ -1712,6 +1712,7 @@ name = "stitch-p2p"
 version = "0.1.0"
 source = "git+https://github.com/LabOverWire/stitch-rs#3331dbf68b9a707f88d7fcd45c5a06b235a4be55"
 dependencies = [
+ "mqp2p",
  "serde_json",
  "thiserror",
  "tokio",

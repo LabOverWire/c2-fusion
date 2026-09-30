@@ -1,22 +1,27 @@
 services:
+  mqdb:
+    image: mqdb-run:poc
+    container_name: c2-mqdb
+    command: ["agent", "start", "--bind", "0.0.0.0:1883", "--db", "/data", "--passwd", "/auth/passwd.txt", "--admin-users", "c2"]
+    networks: [c2net]
+
   edge:
     image: c2-node:poc
     container_name: c2-edge
     cap_add: [NET_ADMIN]
+    depends_on: [mqdb]
     environment:
       C2_NAME: edge
+      C2_BROKER: mqdb:1883
+      C2_BROKER_USER: c2
+      C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
-      C2_ADVERTISE: edge:9000
-      C2_SHARED: /shared
-      C2_DIAL: relay
-      C2_ACCEPT: hq
       C2_INGEST_FMT: mtf-xml
       C2_INGEST_FILE: /messages/edge.json
       C2_INBOX: /inbox
       C2_INBOX_FMT: niem-json
       C2_PICTURE_INTERVAL_MS: "1000"
     volumes:
-      - shared:/shared
       - ./messages:/messages:ro
       - ./run/inbox/edge:/inbox
     networks: [c2net]
@@ -25,18 +30,17 @@ services:
     image: c2-node:poc
     container_name: c2-relay
     cap_add: [NET_ADMIN]
+    depends_on: [mqdb]
     environment:
       C2_NAME: relay
+      C2_BROKER: mqdb:1883
+      C2_BROKER_USER: c2
+      C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
-      C2_ADVERTISE: relay:9000
-      C2_SHARED: /shared
-      C2_DIAL: hq
-      C2_ACCEPT: edge
       C2_INGEST_FMT: niem-json
       C2_INGEST_FILE: /messages/relay.json
       C2_PICTURE_INTERVAL_MS: "1000"
     volumes:
-      - shared:/shared
       - ./messages:/messages:ro
     networks: [c2net]
 
@@ -44,24 +48,20 @@ services:
     image: c2-node:poc
     container_name: c2-hq
     cap_add: [NET_ADMIN]
+    depends_on: [mqdb]
     environment:
       C2_NAME: hq
+      C2_BROKER: mqdb:1883
+      C2_BROKER_USER: c2
+      C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
-      C2_ADVERTISE: hq:9000
-      C2_SHARED: /shared
-      C2_DIAL: edge
-      C2_ACCEPT: relay
       C2_INGEST_FMT: niem-json
       C2_INGEST_FILE: /messages/hq.json
       C2_PICTURE_INTERVAL_MS: "1000"
     volumes:
-      - shared:/shared
       - ./messages:/messages:ro
     networks: [c2net]
 
 networks:
   c2net:
     name: c2net
-
-volumes:
-  shared:

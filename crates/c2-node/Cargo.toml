@@ -12,6 +12,6 @@ path = "src/main.rs"
 [dependencies]
 c2-codec = { path = "../c2-codec" }
 c2-exchange = { path = "../c2-exchange" }
-stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store"] }
+stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store", "discovery"] }
 mqp2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "mqp2p" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "net", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal"] }
