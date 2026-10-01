@@ -11,6 +11,7 @@ use tokio::time::sleep;
 
 const PULL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(1);
+const LEASE_SECS: u64 = 6;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -33,7 +34,8 @@ async fn connect_and_register(
     loop {
         let mut config = PeerConfig::new(name, broker)
             .without_stun()
-            .with_bind_addr(bind);
+            .with_bind_addr(bind)
+            .with_lease_secs(LEASE_SECS);
         if let Some((user, pass)) = credentials {
             config = config.with_credentials(user.clone(), pass.clone());
         }
