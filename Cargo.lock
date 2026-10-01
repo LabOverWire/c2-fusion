@@ -955,8 +955,8 @@ dependencies = [
 
 [[package]]
 name = "mqp2p"
-version = "0.1.0"
-source = "git+https://github.com/LabOverWire/stitch-rs#3331dbf68b9a707f88d7fcd45c5a06b235a4be55"
+version = "0.2.0"
+source = "git+https://github.com/LabOverWire/stitch-rs#fd8d53fe25a473629c782af3174eb3a378c34a53"
 dependencies = [
  "flume",
  "mqtt5",
@@ -1710,7 +1710,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 [[package]]
 name = "stitch-p2p"
 version = "0.1.0"
-source = "git+https://github.com/LabOverWire/stitch-rs#3331dbf68b9a707f88d7fcd45c5a06b235a4be55"
+source = "git+https://github.com/LabOverWire/stitch-rs#fd8d53fe25a473629c782af3174eb3a378c34a53"
 dependencies = [
  "mqp2p",
  "serde_json",

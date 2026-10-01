@@ -1,6 +1,6 @@
 # DDIL emulation harness
 
-Runs an MQDB broker and three c2-fusion nodes as containers on a Docker bridge, and demonstrates the nodes discovering each other through MQDB, converging over peer-to-peer QUIC, and reconverging after a network partition with a write injected during the outage. This is the experimentation and simulation environment the challenge's essential outcomes call for, standing in for physical RF.
+Runs an MQDB broker and three c2-fusion nodes as containers on a Docker bridge, and demonstrates the nodes discovering each other through MQDB, converging over peer-to-peer QUIC, and reconverging after a network partition with a write injected during the outage. Presence is maintained by a heartbeat-renewed TTL lease, so a partitioned node's registration expires and it drops out of discovery, then returns when it reconnects and renews. This is the experimentation and simulation environment the challenge's essential outcomes call for, standing in for physical RF.
 
 ## What it shows
 
@@ -9,11 +9,11 @@ Runs an MQDB broker and three c2-fusion nodes as containers on a Docker bridge, 
 1. Bring up an MQDB broker and three nodes (edge, relay, hq). Each node registers with the broker and discovers the others through it; each ingests one message in a wire format (edge in MTF-XML, relay and hq in NIEM-JSON).
 2. Converge: the nodes connect peer-to-peer over QUIC and reach the same 3-message picture.
 3. Degrade: apply a `tc`/`netem` rate and delay profile to the edge uplink; the picture holds.
-4. Partition: disconnect edge from the network (it loses both the broker and its peers).
+4. Partition: disconnect edge from the network (it loses both the broker and its peers). While isolated it can no longer renew its presence lease, so its `$DB/peers` record expires while relay and hq keep renewing theirs.
 5. Inject: drop a new contact into edge's inbox while it is isolated. Edge ingests it locally (count 4); HQ correctly still shows 3.
-6. Heal and reconverge: reconnect edge; it re-discovers through MQDB and all three nodes reach the same 4-message picture.
+6. Heal and reconverge: reconnect edge; it renews its lease, re-discovers through MQDB, and all three nodes reach the same 4-message picture.
 
-Last run (2026-09-30):
+Last run (2026-10-01), `run.sh`:
 
 ```
 c2-edge converged to 3
@@ -27,9 +27,24 @@ c2-hq reconverged to 4
 DEMO PASSED: MQDB discovery, converge, degrade, partition, inject, reconverge
 ```
 
+`evidence.sh` captures the same sequence with the MQDB peer registry at each phase. With the demo lease of 6 seconds, the registry during the partition shows edge's lease lapsed while the connected nodes stay fresh (a peer is live only while `_expires_at > now`):
+
+```
+now=1790874816
+edge   _expires_at=1790874793  (lapsed; _version frozen at 2, no renewals since it was isolated)
+relay  _expires_at=1790874821  (fresh; _version 16, still renewing)
+hq     _expires_at=1790874821  (fresh; _version 16, still renewing)
+```
+
+On reconnect edge renews its lease (its `_expires_at` and `_version` advance again) and all three return to the shared 4-message picture.
+
 ## Discovery via MQDB, data plane over QUIC
 
 Each node uses `mqp2p::Peer` to register with the MQDB broker and discover peers over its `$DB/peers` topics, and `stitch_p2p::Swarm` dials the discovered peers and bridges each into the sync session. The broker carries discovery and signaling only; the message exchange and convergence are peer-to-peer over QUIC, so the broker is not in the data path and nodes keep converging through a broker outage. STUN is disabled (`without_stun`); on a single-host bridge the offer's host candidate connects directly, so no hole-punching is needed (hole-punching is what fails on virtualized/overlay networks). A fully broker-less direct-dial mode also exists (`QuicEndpoint::connect`), covered by the `quic_exchange` integration test.
+
+## Presence lease
+
+Each registration carries an `_expires_at` lease (MQDB's TTL field, in unix seconds). A node renews it on a heartbeat at a third of the lease, and `list_peers` filters out any peer whose lease has lapsed, so discovery reflects liveness rather than leaving a node that has gone away as a stale `online` entry. A node isolated past its lease stops renewing and drops out of discovery; on reconnect it renews (or, if the record was already swept, re-creates it under the same id) and reappears. The nodes here use a 6-second demo lease so the lapse is visible within the partition window; the library default is 15 seconds. Client-side filtering is load-bearing because MQDB's own TTL sweep is coarser (about 60 seconds), and it compares each reader's clock to the writer's stamp, so nodes are assumed to be roughly clock-synced.
 
 ## Broker image
 
