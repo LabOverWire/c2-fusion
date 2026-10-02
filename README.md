@@ -35,6 +35,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
+For a full run-and-verify walkthrough (building, the DDIL harness, capturing evidence, and how to confirm each claim yourself), see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+
 ## Scope note
 
 This is a bounded proof of concept, not a product. Format coverage is a representative subset, and the NATO Core Data Framework is addressed at the design level pending access to the specification.
