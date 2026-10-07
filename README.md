@@ -22,6 +22,13 @@ The exchange and convergence layer this builds on is existing LabOverWire work:
 - [stitch-rs](https://github.com/LabOverWire/stitch-rs): offline-first reactive sync, including `stitch-p2p` (broker-less multi-leader sync whose convergence is machine-checked in TLA+) and `mqp2p` (QUIC NAT traversal).
 - [mqtt-lib](https://github.com/LabOverWire/mqtt-lib): MQTT 5.0 in Rust with QUIC transport.
 
+## Background research
+
+The QUIC transport choice is informed by the author's research on MQTT over QUIC under loss (implemented in `mqtt-lib`):
+
+- Preprint: Fabrício Bracht, "Evaluating Stream Mapping Strategies for MQTT over QUIC," SSRN 2026 (preprint, under peer review): https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7576577
+- Data and analysis scripts (open): Zenodo, https://doi.org/10.5281/zenodo.19098819
+
 ## Status
 
 Present: the canonical model, the codec layer with two formats, the codec-bounded stitch-p2p exchange (wire format in, shared picture out, re-exportable to any format), and a containerized harness (`crates/c2-node` plus `harness/`) in which three nodes discover each other through an MQDB broker, connect peer-to-peer over QUIC, converge, hold the shared picture under a `netem` rate and delay profile, and reconverge after a network partition (with a write injected during the outage) by re-discovering through MQDB. Next: loss shaping with UDP GSO disabled, and capturing convergence latency per bearer profile.
