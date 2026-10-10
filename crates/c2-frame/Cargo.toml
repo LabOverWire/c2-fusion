@@ -1,0 +1,9 @@
+[package]
+name = "c2-frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bebytes = { version = "3.0.2", default-features = false }

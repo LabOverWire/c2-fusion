@@ -200,6 +200,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2-frame"
+version = "0.1.0"
+dependencies = [
+ "bebytes",
+]
+
+[[package]]
 name = "c2-model"
 version = "0.1.0"
 dependencies = [
