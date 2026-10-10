@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bebytes = "3.0.2"
 c2-model = { path = "../c2-model" }
 serde = { workspace = true }
 serde_json = { workspace = true }

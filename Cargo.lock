@@ -180,6 +180,7 @@ dependencies = [
 name = "c2-codec"
 version = "0.1.0"
 dependencies = [
+ "bebytes",
  "c2-model",
  "serde",
  "serde_json",

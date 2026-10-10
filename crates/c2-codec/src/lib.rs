@@ -1,5 +1,6 @@
 use c2_model::C2Message;
 
+pub mod compact;
 pub mod mtf_xml;
 pub mod niem;
 
@@ -26,7 +27,11 @@ pub struct Registry {
 impl Registry {
     pub fn with_defaults() -> Self {
         Self {
-            codecs: vec![Box::new(mtf_xml::MtfXmlCodec), Box::new(niem::NiemCodec)],
+            codecs: vec![
+                Box::new(mtf_xml::MtfXmlCodec),
+                Box::new(niem::NiemCodec),
+                Box::new(compact::CompactCodec),
+            ],
         }
     }
 
@@ -71,11 +76,11 @@ mod tests {
     }
 
     #[test]
-    fn registry_exposes_both_formats() {
+    fn registry_exposes_every_format() {
         let reg = Registry::with_defaults();
         let mut formats = reg.wire_formats();
         formats.sort();
-        assert_eq!(formats, vec!["mtf-xml", "niem-json"]);
+        assert_eq!(formats, vec!["compact-bin", "mtf-xml", "niem-json"]);
     }
 
     #[test]
