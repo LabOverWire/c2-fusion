@@ -17,6 +17,8 @@ Re-running the script upgrades the binary and restarts the node.
 
 A fourth argument gives the node a LoRa address and enables the RYLR890 bearer on UART2 (pins 11 and 13, reset on pin 15). `C2_LORA_NETWORK`, `C2_LORA_POWER_DBM` and `C2_LORA_SPREADING_FACTOR` override the radio defaults (6, 15, 9).
 
+The LoRa bearer is a stitch-p2p sync session, like the peer-to-peer QUIC sessions: every write to the shared picture goes out as its replication frame, carrying the origin's stamp and per-origin sequence number, and a received frame is applied with that stamp rather than re-ingested, so the radio path keeps the same convergence rules as the rest of the exchange. On the air a frame is re-encoded compactly (a C2 record travels in the compact codec, about 130 bytes in all), and every 30 seconds, and whenever a frame arrives out of order, each node broadcasts its per-origin cursors so its peer resends exactly the frames it is missing. That repairs frames the link gave up on and brings a node back in line after a partition. A frame that does not fit one LoRa payload (237 bytes) is skipped and logged; there is no fragmentation yet.
+
 ## GNSS
 
 Setting `C2_GNSS=1` when running `install.sh` enables a GNSS receiver with PPS on UART1, at `C2_GNSS_BAUD` (default 115200, which suits the UM980; the GT-U7 needs 9600). Both receivers use the same header pins. Wiring for the UM980 carrier:
@@ -50,5 +52,5 @@ Once it has a fix and its clock is disciplined, the node also shares its own pos
 - Logs: `grep c2-node /var/log/messages`. Syslog keeps them in RAM with size-based rotation, so they do not survive a reboot.
 - Stop for good: remove the `run.sh` line from `/etc/inittab`, run `kill -HUP 1`, then `killall c2-node`.
 - The Ethernet MAC is randomised on every boot, so DHCP addresses change unless the router reserves them. Find a board by connecting to SSH hosts and checking `hostname`, or use the USB link. The stock image puts every board at `192.168.42.1`; to connect two at once, change the address in `/mnt/system/usb-ncm.sh` and the DHCP range in `/etc/dnsmasq.conf` on one of them (node-b uses `192.168.43.1`).
-- The shared picture is held in memory, so a rebooted node rejoins empty and re-syncs from its peers.
+- The shared picture and its replication log persist in `C2_STORE_DIR` (`/opt/c2/store`), so a rebooted node comes back with its picture and continues its own write sequence where it left off. Wiping that directory gives the node a fresh log under the same identity; its new writes would reuse sequence numbers its peers already hold and be dropped, so a node with a wiped store should be given a new `C2_NAME`.
 - The broker is optional. The node's identity is derived from `C2_NAME`, and LoRa, GNSS and the inbox start at boot whether or not the broker is reachable, so a node out of network range still exchanges messages over the radio. Registration and peer-to-peer sync join in the background once the broker answers; the node probes it with backoff from 1 to 60 seconds.

@@ -9,10 +9,7 @@ use c2_gnss::{
 };
 use c2_model::{C2Message, Domain, FunctionalService, PositionReport};
 use stitch_p2p::Store;
-use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, sleep_until, Instant, MissedTickBehavior};
-
-use crate::announce;
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(60);
 const RECOVERY_BACKOFF: Duration = Duration::from_secs(5);
@@ -27,14 +24,9 @@ pub struct GnssSettings {
     pub position_interval: Duration,
 }
 
-pub struct Sharing {
-    pub store: Arc<Store>,
-    pub outbox: Option<mpsc::Sender<C2Message>>,
-}
-
-pub async fn run(settings: GnssSettings, name: String, sharing: Sharing) {
+pub async fn run(settings: GnssSettings, name: String, store: Arc<Store>) {
     loop {
-        let Err(error) = session(&settings, &name, &sharing).await;
+        let Err(error) = session(&settings, &name, &store).await;
         eprintln!("GNSS name={name} error={error} recovering");
         sleep(RECOVERY_BACKOFF).await;
     }
@@ -52,7 +44,7 @@ struct Status {
 async fn session(
     settings: &GnssSettings,
     name: &str,
-    sharing: &Sharing,
+    store: &Store,
 ) -> Result<Infallible, GnssError> {
     let mut port = open_serial(&settings.port, settings.baud_rate)?;
     request_fix_output(&mut port).await?;
@@ -66,8 +58,7 @@ async fn session(
     let mut report = interval(REPORT_INTERVAL);
     report.set_missed_tick_behavior(MissedTickBehavior::Delay);
     report.tick().await;
-    let mut position = interval(settings.position_interval);
-    position.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut next_share = Instant::now();
     let mut disciplined = false;
     let mut last_edge: Option<PpsEdge> = None;
     let mut status = Status::default();
@@ -83,6 +74,10 @@ async fn session(
                 Ok(Sentence::Gga(gga)) => {
                     heard = Instant::now();
                     status.fix = Some(gga);
+                    if let (true, Some(fix)) = (disciplined && heard >= next_share, gga.position) {
+                        share_position(name, store, fix, gga.satellites).await;
+                        next_share = heard + settings.position_interval;
+                    }
                 }
                 Ok(Sentence::Rmc(rmc)) => {
                     heard = Instant::now();
@@ -107,11 +102,6 @@ async fn session(
                 Err(error) => eprintln!("GNSS name={name} skip error={error}"),
             },
             _ = sleep_until(heard + SILENCE_LIMIT) => return Err(GnssError::Silent(SILENCE_LIMIT)),
-            _ = position.tick() => {
-                if let (true, Some(Gga { position: Some(fix), satellites, .. })) = (disciplined, status.fix) {
-                    share_position(name, sharing, fix, satellites).await;
-                }
-            }
             _ = report.tick() => {
                 log_status(name, &status);
                 status = Status { fix: status.fix, ..Status::default() };
@@ -120,7 +110,7 @@ async fn session(
     }
 }
 
-async fn share_position(name: &str, sharing: &Sharing, fix: Position, satellites: u8) {
+async fn share_position(name: &str, store: &Store, fix: Position, satellites: u8) {
     let msg = C2Message::PositionReport(PositionReport {
         id: format!("POS-{name}"),
         reporting_unit: name.to_string(),
@@ -130,14 +120,11 @@ async fn share_position(name: &str, sharing: &Sharing, fix: Position, satellites
         latitude: fix.latitude,
         longitude: fix.longitude,
     });
-    match ingest(&sharing.store, &msg).await {
-        Ok(()) => {
-            println!(
-                "GNSS name={name} position-report id={} sats={satellites}",
-                msg.id()
-            );
-            announce(&sharing.outbox, name, &msg);
-        }
+    match ingest(store, &msg).await {
+        Ok(()) => println!(
+            "GNSS name={name} position-report id={} sats={satellites}",
+            msg.id()
+        ),
         Err(error) => eprintln!("GNSS name={name} position-report error={error}"),
     }
 }

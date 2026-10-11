@@ -11,6 +11,7 @@ c2-codec = { path = "../c2-codec" }
 stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+bebytes = "3.0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "sync"] }

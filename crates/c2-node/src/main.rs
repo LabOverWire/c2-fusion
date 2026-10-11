@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -11,7 +12,6 @@ use mqp2p::{Peer, PeerConfig};
 use sha2::{Digest, Sha256};
 use stitch_p2p::{PeerId, Store, Swarm, SyncNode};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout};
 
 #[cfg(target_os = "linux")]
@@ -90,14 +90,6 @@ fn reject_gnss(name: &str) -> Result<()> {
     }
 }
 
-fn announce(outbox: &Option<mpsc::Sender<C2Message>>, name: &str, msg: &C2Message) {
-    if let Some(sender) = outbox {
-        if let Err(error) = sender.try_send(msg.clone()) {
-            eprintln!("LORA name={name} skip id={} outbox={error}", msg.id());
-        }
-    }
-}
-
 async fn broker_reachable(broker: &str) -> bool {
     matches!(
         timeout(BROKER_PROBE_TIMEOUT, TcpStream::connect(broker)).await,
@@ -168,13 +160,7 @@ async fn join_mesh(
     Swarm::spawn(Arc::new(peer), node, PULL)
 }
 
-async fn run_inbox(
-    store: Arc<Store>,
-    name: String,
-    dir: String,
-    fmt: String,
-    outbox: Option<mpsc::Sender<C2Message>>,
-) {
+async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
     let registry = Registry::with_defaults();
     loop {
         match tokio::fs::read_dir(&dir).await {
@@ -187,10 +173,7 @@ async fn run_inbox(
                     match tokio::fs::read(&path).await {
                         Ok(bytes) => {
                             match ingest_wire_with(&store, &registry, &fmt, &bytes).await {
-                                Ok(msg) => {
-                                    println!("INBOX name={name} ingested id={}", msg.id());
-                                    announce(&outbox, &name, &msg);
-                                }
+                                Ok(msg) => println!("INBOX name={name} ingested id={}", msg.id()),
                                 Err(e) => eprintln!("INBOX name={name} error={e}"),
                             }
                         }
@@ -207,16 +190,30 @@ async fn run_inbox(
     }
 }
 
+fn picture_digest(entries: &BTreeMap<&String, &C2Message>) -> Result<String> {
+    let digest = Sha256::digest(serde_json::to_vec(entries)?);
+    Ok(digest[..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
     loop {
-        if let Ok(pic) = picture(&store).await {
-            let mut ids: Vec<String> = pic.keys().cloned().collect();
-            ids.sort();
-            println!(
-                "PICTURE name={name} count={} ids={}",
-                ids.len(),
-                ids.join(",")
-            );
+        match picture(&store).await {
+            Ok(pic) => {
+                let entries: BTreeMap<&String, &C2Message> = pic.iter().collect();
+                let ids: Vec<&str> = entries.keys().map(|id| id.as_str()).collect();
+                match picture_digest(&entries) {
+                    Ok(digest) => println!(
+                        "PICTURE name={name} count={} digest={digest} ids={}",
+                        ids.len(),
+                        ids.join(",")
+                    ),
+                    Err(error) => eprintln!("PICTURE name={name} digest-error={error}"),
+                }
+            }
+            Err(error) => eprintln!("PICTURE name={name} error={error}"),
         }
         sleep(interval).await;
     }
@@ -243,29 +240,26 @@ async fn main() -> Result<()> {
         _ => None,
     };
     let mut tasks = Vec::new();
-    let store = Arc::new(Store::new(node_identity(&name)));
+    let store = Arc::new(match std::env::var("C2_STORE_DIR") {
+        Ok(dir) => Store::open(node_identity(&name), &dir)?,
+        Err(_) => Store::new(node_identity(&name)),
+    });
 
-    let outbox = match lora_settings()? {
-        Some(settings) => {
-            let (sender, receiver) = mpsc::channel(lora::OUTBOX_DEPTH);
-            tasks.push(tokio::spawn(lora::run(
-                settings,
-                Arc::clone(&store),
-                name.clone(),
-                receiver,
-            )));
-            Some(sender)
-        }
-        None => None,
-    };
+    if let Some(settings) = lora_settings()? {
+        tasks.push(tokio::spawn(lora::run(
+            settings,
+            store.node().clone(),
+            name.clone(),
+        )));
+    }
 
     #[cfg(target_os = "linux")]
     if let Some(settings) = gnss_settings()? {
-        let sharing = gnss::Sharing {
-            store: Arc::clone(&store),
-            outbox: outbox.clone(),
-        };
-        tasks.push(tokio::spawn(gnss::run(settings, name.clone(), sharing)));
+        tasks.push(tokio::spawn(gnss::run(
+            settings,
+            name.clone(),
+            Arc::clone(&store),
+        )));
     }
     #[cfg(not(target_os = "linux"))]
     reject_gnss(&name)?;
@@ -275,7 +269,6 @@ async fn main() -> Result<()> {
         let registry = Registry::with_defaults();
         let msg = ingest_wire_with(&store, &registry, &fmt, &bytes).await?;
         println!("INGEST name={name} id={} fmt={fmt}", msg.id());
-        announce(&outbox, &name, &msg);
     }
 
     let mesh = tokio::spawn(join_mesh(
@@ -293,7 +286,6 @@ async fn main() -> Result<()> {
             name.clone(),
             inbox,
             fmt,
-            outbox.clone(),
         )));
     }
     tasks.push(tokio::spawn(run_printer(

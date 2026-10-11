@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 c2-codec = { path = "../c2-codec" }
 c2-exchange = { path = "../c2-exchange" }
-stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store", "discovery"] }
+stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store", "discovery", "persistence"] }
 mqp2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "mqp2p" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal", "sync", "net"] }
 c2-lora = { version = "0.1.0", path = "../c2-lora" }
@@ -22,6 +22,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 tracing = "0.1.44"
 sha2 = "0.11"
 humantime = "2.4"
+serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 c2-gnss = { version = "0.1.0", path = "../c2-gnss" }
