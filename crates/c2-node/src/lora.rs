@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use c2_exchange::radio::RadioMessage;
+use c2_exchange::radio::{split, RadioMessage, Reassembler, Received};
 use c2_lora::{
     open_serial, Config, Due, Frame, Inbound, Link, LoraError, Outgoing, Radio, ResetLine,
-    MAX_IN_FLIGHT,
+    MAX_DATA, MAX_IN_FLIGHT,
 };
 use stitch_p2p::{Cursors, PeerId, RecordOutcome, SyncNode, WriteFrame};
 use tokio::sync::mpsc;
@@ -55,6 +55,9 @@ fn short(peer: &PeerId) -> String {
 
 struct Exchange {
     queue: VecDeque<WriteFrame>,
+    wire: VecDeque<(Vec<u8>, String)>,
+    reassembler: Reassembler,
+    fragment_id: u16,
     held: BTreeMap<(PeerId, u64), WriteFrame>,
     hello_due: bool,
     last_hello: Option<Instant>,
@@ -98,6 +101,9 @@ async fn session(
     hello.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut exchange = Exchange {
         queue: VecDeque::new(),
+        wire: VecDeque::new(),
+        reassembler: Reassembler::default(),
+        fragment_id: settings.config.address,
         held: BTreeMap::new(),
         hello_due: false,
         last_hello: None,
@@ -105,8 +111,8 @@ async fn session(
 
     loop {
         let due = link.next_due().map(Instant::from_std);
-        let ready_to_send =
-            exchange.hello_due || (link.has_capacity() && !exchange.queue.is_empty());
+        let ready_to_send = exchange.hello_due
+            || (link.has_capacity() && !(exchange.wire.is_empty() && exchange.queue.is_empty()));
         tokio::select! {
             biased;
             frame = radio.recv() => {
@@ -155,47 +161,91 @@ async fn send_next(
     name: &str,
     exchange: &mut Exchange,
 ) -> Result<(), LoraError> {
-    let sending_hello = exchange.hello_due;
-    let (message, label) = match sending_hello {
-        true => {
-            exchange.hello_due = false;
-            exchange.last_hello = Some(Instant::now());
+    if exchange.hello_due {
+        exchange.hello_due = false;
+        exchange.last_hello = Some(Instant::now());
+        let (from, cursors) = {
             let state = node.state();
             let guard = state.lock().await;
-            let cursors = guard.cursors();
-            let label = format!("hello cursors={}", cursors.len());
-            (
-                RadioMessage::Hello {
-                    from: guard.self_id(),
-                    cursors,
-                },
-                label,
-            )
-        }
-        false => match exchange.queue.pop_front() {
-            Some(frame) => {
-                let label = format!(
-                    "write id={} origin={} origin_seq={}",
-                    frame.id,
-                    short(&frame.stamp.peer),
-                    frame.seq
-                );
-                (RadioMessage::Write(frame), label)
+            (guard.self_id(), guard.cursors())
+        };
+        let label = format!("hello cursors={}", cursors.len());
+        let message = RadioMessage::Hello { from, cursors };
+        return match message.encode() {
+            Ok(payload) => send(radio, link, name, &payload, &label, Delivery::Datagram).await,
+            Err(error) => {
+                eprintln!("LORA name={name} skip {label} error={error}");
+                Ok(())
             }
-            None => return Ok(()),
-        },
-    };
-    let payload = match message.encode() {
+        };
+    }
+    if exchange.wire.is_empty() {
+        let Some(frame) = exchange.queue.pop_front() else {
+            return Ok(());
+        };
+        stage(name, exchange, frame);
+    }
+    match exchange.wire.pop_front() {
+        Some((payload, label)) => send(radio, link, name, &payload, &label, Delivery::Acked).await,
+        None => Ok(()),
+    }
+}
+
+fn stage(name: &str, exchange: &mut Exchange, frame: WriteFrame) {
+    let label = format!(
+        "write id={} origin={} origin_seq={}",
+        frame.id,
+        short(&frame.stamp.peer),
+        frame.seq
+    );
+    let payload = match RadioMessage::Write(frame).encode() {
         Ok(payload) => payload,
         Err(error) => {
             eprintln!("LORA name={name} skip {label} error={error}");
-            return Ok(());
+            return;
         }
     };
+    let id = exchange.fragment_id;
+    exchange.fragment_id = id.wrapping_add(1);
+    match split(&payload, MAX_DATA, id) {
+        Ok(parts) if parts.len() == 1 => exchange
+            .wire
+            .extend(parts.into_iter().map(|part| (part, label.clone()))),
+        Ok(parts) => {
+            let count = parts.len();
+            exchange
+                .wire
+                .extend(parts.into_iter().enumerate().map(|(index, part)| {
+                    (
+                        part,
+                        format!("{label} fragment={}/{count} fragment_id={id}", index + 1),
+                    )
+                }));
+        }
+        Err(error) => eprintln!(
+            "LORA name={name} skip {label} len={} error={error}",
+            payload.len()
+        ),
+    }
+}
+
+enum Delivery {
+    Acked,
+    Datagram,
+}
+
+async fn send(
+    radio: &mut Radio<SerialStream>,
+    link: &mut Link,
+    name: &str,
+    payload: &[u8],
+    label: &str,
+    delivery: Delivery,
+) -> Result<(), LoraError> {
     let now = std::time::Instant::now();
-    let sent = match sending_hello {
-        true => link.datagram(&payload, now),
-        false => link.originate(&payload, now),
+    let sent = match delivery {
+        Delivery::Acked => link.originate(payload, now),
+        Delivery::Datagram => link.datagram(payload, now),
     };
     let outgoing = match sent {
         Ok(outgoing) => outgoing,
@@ -269,13 +319,19 @@ async fn dispatch(
 ) {
     let source = frame.source;
     let rssi = frame.rssi_dbm;
-    match RadioMessage::decode(payload) {
-        Ok(RadioMessage::Write(write)) => {
+    match exchange
+        .reassembler
+        .accept(source, payload, std::time::Instant::now())
+    {
+        Ok(Received::Complete(RadioMessage::Write(write))) => {
             apply(node, name, exchange, source, rssi, frame.snr, write).await;
         }
-        Ok(RadioMessage::Hello { from, cursors }) => {
+        Ok(Received::Complete(RadioMessage::Hello { from, cursors })) => {
             answer_hello(node, name, exchange, writes, from, cursors).await;
         }
+        Ok(Received::Partial { id, have, count }) => println!(
+            "LORA name={name} rx fragment from={source} fragment_id={id} have={have}/{count} rssi_dbm={rssi}"
+        ),
         Err(error) => eprintln!(
             "LORA name={name} rx-undecodable from={source} seq={sequence} rssi_dbm={rssi} error={error}"
         ),
