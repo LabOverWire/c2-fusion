@@ -11,7 +11,7 @@ This guide explains how to build and run the proof of concept, what each step sh
 - Peer-to-peer convergence over QUIC whose safety property is machine-checked in TLA+ (in the sibling `stitch-rs` repo).
 - DDIL behaviour in a containerised harness: converge, hold under a degraded link, partition with a write injected during the outage, and reconverge on reconnection, with presence reflecting the partition.
 
-What the POC does not claim: APP-11 / ADatP-3 or NCDF conformance (the `mtf-xml` codec is a representative stand-in, and `coie-text` follows the public ADatP-3 structure with provisional set definitions); there is no RF ingest; and the bearer profile numbers are placeholders. Those are the funded work, not present capability.
+What the POC does not claim: APP-11 / ADatP-3 or NCDF conformance (NCDF alignment is design-level only, in `docs/ncdf-alignment.md`; the `mtf-xml` codec is a representative stand-in, and `coie-text` follows the public ADatP-3 structure with provisional set definitions); there is no RF ingest; and the bearer profile numbers are placeholders. Those are the funded work, not present capability.
 
 ## Prerequisites
 
