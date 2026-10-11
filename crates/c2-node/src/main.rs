@@ -8,9 +8,11 @@ use c2_exchange::{ingest_wire_with, picture};
 use c2_lora::{Bandwidth, Config, Modulation};
 use c2_model::C2Message;
 use mqp2p::{Peer, PeerConfig};
-use stitch_p2p::{peer_id_from_fingerprint, Store, Swarm};
+use sha2::{Digest, Sha256};
+use stitch_p2p::{PeerId, Store, Swarm, SyncNode};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 #[cfg(target_os = "linux")]
 mod gnss;
@@ -18,6 +20,8 @@ mod lora;
 
 const PULL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(1);
+const BROKER_RETRY_MAX: Duration = Duration::from_secs(60);
+const BROKER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const LEASE_SECS: u64 = 6;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -94,32 +98,74 @@ fn announce(outbox: &Option<mpsc::Sender<C2Message>>, name: &str, msg: &C2Messag
     }
 }
 
+async fn broker_reachable(broker: &str) -> bool {
+    matches!(
+        timeout(BROKER_PROBE_TIMEOUT, TcpStream::connect(broker)).await,
+        Ok(Ok(_))
+    )
+}
+
 async fn connect_and_register(
     name: &str,
     broker: &str,
     bind: SocketAddr,
     credentials: &Option<(String, String)>,
 ) -> Peer {
+    let mut delay = RETRY;
+    let mut peer = loop {
+        if broker_reachable(broker).await {
+            let mut config = PeerConfig::new(name, broker)
+                .without_stun()
+                .with_bind_addr(bind)
+                .with_lease_secs(LEASE_SECS);
+            if let Some((user, pass)) = credentials {
+                config = config.with_credentials(user.clone(), pass.clone());
+            }
+            match Peer::new(config).await {
+                Ok(peer) => break peer,
+                Err(e) => eprintln!(
+                    "broker connect failed for {name}: {e} retry_s={}",
+                    delay.as_secs()
+                ),
+            }
+        } else {
+            eprintln!(
+                "broker unreachable for {name}: {broker} retry_s={}",
+                delay.as_secs()
+            );
+        }
+        sleep(delay).await;
+        delay = (delay * 2).min(BROKER_RETRY_MAX);
+    };
     loop {
-        let mut config = PeerConfig::new(name, broker)
-            .without_stun()
-            .with_bind_addr(bind)
-            .with_lease_secs(LEASE_SECS);
-        if let Some((user, pass)) = credentials {
-            config = config.with_credentials(user.clone(), pass.clone());
+        match peer.register().await {
+            Ok(id) => {
+                println!("REGISTERED name={name} peer_id={id} broker={broker}");
+                return peer;
+            }
+            Err(e) => eprintln!(
+                "register failed for {name}: {e} retry_s={}",
+                delay.as_secs()
+            ),
         }
-        match Peer::new(config).await {
-            Ok(mut peer) => match peer.register().await {
-                Ok(id) => {
-                    println!("REGISTERED name={name} peer_id={id} broker={broker}");
-                    return peer;
-                }
-                Err(e) => eprintln!("register failed for {name}: {e}"),
-            },
-            Err(e) => eprintln!("broker connect failed for {name}: {e}"),
-        }
-        sleep(RETRY).await;
+        sleep(delay).await;
+        delay = (delay * 2).min(BROKER_RETRY_MAX);
     }
+}
+
+fn node_identity(name: &str) -> PeerId {
+    Sha256::digest(name.as_bytes()).into()
+}
+
+async fn join_mesh(
+    name: String,
+    broker: String,
+    bind: SocketAddr,
+    credentials: Option<(String, String)>,
+    node: SyncNode,
+) -> Swarm {
+    let peer = connect_and_register(&name, &broker, bind, &credentials).await;
+    Swarm::spawn(Arc::new(peer), node, PULL)
 }
 
 async fn run_inbox(
@@ -197,10 +243,7 @@ async fn main() -> Result<()> {
         _ => None,
     };
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = start_gnss(&name)?.into_iter().collect();
-    let peer = connect_and_register(&name, &broker, bind, &credentials).await;
-    let self_id = peer_id_from_fingerprint(peer.fingerprint())
-        .ok_or_else(|| -> Box<dyn Error + Send + Sync> { "invalid peer fingerprint".into() })?;
-    let store = Arc::new(Store::new(self_id));
+    let store = Arc::new(Store::new(node_identity(&name)));
 
     let outbox = match lora_settings()? {
         Some(settings) => {
@@ -224,7 +267,13 @@ async fn main() -> Result<()> {
         announce(&outbox, &name, &msg);
     }
 
-    let swarm = Swarm::spawn(Arc::new(peer), store.node().clone(), PULL);
+    let mesh = tokio::spawn(join_mesh(
+        name.clone(),
+        broker,
+        bind,
+        credentials,
+        store.node().clone(),
+    ));
 
     if let Ok(inbox) = env_req("C2_INBOX") {
         let fmt = env_or("C2_INBOX_FMT", "niem-json");
@@ -246,6 +295,9 @@ async fn main() -> Result<()> {
     for t in tasks {
         t.abort();
     }
-    drop(swarm);
+    mesh.abort();
+    if let Ok(swarm) = mesh.await {
+        swarm.abort();
+    }
     Ok(())
 }

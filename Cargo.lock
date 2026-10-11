@@ -266,6 +266,7 @@ dependencies = [
  "c2-lora",
  "c2-model",
  "mqp2p",
+ "sha2",
  "stitch-p2p",
  "tokio",
  "tokio-serial",
