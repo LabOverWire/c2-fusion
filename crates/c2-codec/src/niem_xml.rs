@@ -6,15 +6,9 @@ use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 use quick_xml::Writer;
 
+use crate::codes::{domain_code, domain_from, service_code, service_from};
+use crate::niem::{check, C2F, MO, NC, USMTF};
 use crate::{Codec, CodecError};
-
-pub const C2F: &str = "https://laboverwire.com/ns/c2-fusion/1.0/";
-pub const NC: &str = "https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/";
-pub const MO: &str =
-    "https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/";
-pub const USMTF: &str = "https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/";
-
-const MAX_AVAILABLE_PERSONNEL: u32 = 9999;
 
 const CONTACT_REPORT: &str = "c2f:ContactReportMessage";
 const SITUATION_REPORT: &str = "c2f:SituationReportMessage";
@@ -42,6 +36,7 @@ impl Codec for NiemXmlCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        check(msg)?;
         let mut w = Writer::new(Vec::new());
         w.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
             .map_err(encode_error)?;
@@ -66,12 +61,6 @@ impl Codec for NiemXmlCodec {
                 close(&mut w, CONTACT_REPORT)?;
             }
             C2Message::Sitrep(m) => {
-                if m.personnel_effective > MAX_AVAILABLE_PERSONNEL {
-                    return Err(CodecError::Encode(format!(
-                        "personnel effective {} exceeds usmtf:AvailablePersonnelQuantity range 0..={MAX_AVAILABLE_PERSONNEL}",
-                        m.personnel_effective
-                    )));
-                }
                 open_root(&mut w, SITUATION_REPORT)?;
                 author(&mut w, &m.reporting_unit)?;
                 date(&mut w, "nc:DocumentCreationDate", &m.reported_at)?;
@@ -330,11 +319,6 @@ fn coordinate(
     latitude: f64,
     longitude: f64,
 ) -> Result<(), CodecError> {
-    if !latitude.is_finite() || !longitude.is_finite() {
-        return Err(CodecError::Encode(format!(
-            "coordinate {latitude}, {longitude} is not finite"
-        )));
-    }
     open(w, name)?;
     open(w, "nc:GeographicCoordinateLatitude")?;
     leaf(w, "nc:LatitudeDegreeValue", &latitude.to_string())?;
@@ -352,50 +336,6 @@ fn codes(
 ) -> Result<(), CodecError> {
     leaf(w, DOMAIN_CODE, domain_code(domain))?;
     leaf(w, SERVICE_CODE, service_code(service))
-}
-
-fn domain_code(domain: &Domain) -> &'static str {
-    match domain {
-        Domain::Land => "LAND",
-        Domain::Air => "AIR",
-        Domain::Maritime => "MARITIME",
-        Domain::Space => "SPACE",
-        Domain::Cyber => "CYBER",
-    }
-}
-
-fn domain_from(code: &str) -> Result<Domain, CodecError> {
-    match code.trim() {
-        "LAND" => Ok(Domain::Land),
-        "AIR" => Ok(Domain::Air),
-        "MARITIME" => Ok(Domain::Maritime),
-        "SPACE" => Ok(Domain::Space),
-        "CYBER" => Ok(Domain::Cyber),
-        other => Err(CodecError::Decode(format!(
-            "unknown operational domain {other}"
-        ))),
-    }
-}
-
-fn service_code(service: &FunctionalService) -> &'static str {
-    match service {
-        FunctionalService::CommandAndControl => "COMMAND_AND_CONTROL",
-        FunctionalService::Intelligence => "INTELLIGENCE",
-        FunctionalService::Logistics => "LOGISTICS",
-        FunctionalService::Medical => "MEDICAL",
-    }
-}
-
-fn service_from(code: &str) -> Result<FunctionalService, CodecError> {
-    match code.trim() {
-        "COMMAND_AND_CONTROL" => Ok(FunctionalService::CommandAndControl),
-        "INTELLIGENCE" => Ok(FunctionalService::Intelligence),
-        "LOGISTICS" => Ok(FunctionalService::Logistics),
-        "MEDICAL" => Ok(FunctionalService::Medical),
-        other => Err(CodecError::Decode(format!(
-            "unknown functional service {other}"
-        ))),
-    }
 }
 
 #[cfg(test)]
@@ -531,14 +471,11 @@ mod tests {
 
     #[test]
     fn schema_rejects_an_invalid_instance() {
-        let C2Message::ContactReport(mut report) = messages().remove(0) else {
-            return;
-        };
-        report.latitude = 200.0;
-        let bytes = NiemXmlCodec
-            .encode(&C2Message::ContactReport(report))
-            .expect("encode");
-        assert!(validate("invalid", &bytes).is_err());
+        let bytes = NiemXmlCodec.encode(&messages()[0]).expect("encode");
+        let invalid = String::from_utf8(bytes)
+            .expect("utf8")
+            .replace(">45.5017<", ">200<");
+        assert!(validate("invalid", invalid.as_bytes()).is_err());
     }
 
     #[test]
@@ -560,18 +497,38 @@ mod tests {
     }
 
     #[test]
-    fn rejects_values_the_exchange_cannot_carry() {
+    fn refuses_values_that_would_break_the_schemas() {
         let C2Message::Sitrep(mut sitrep) = messages().remove(1) else {
             return;
         };
         sitrep.personnel_effective = 10_000;
         assert!(NiemXmlCodec.encode(&C2Message::Sitrep(sitrep)).is_err());
-        let C2Message::PositionReport(mut position) = messages().remove(3) else {
+        let C2Message::PositionReport(position) = messages().remove(3) else {
             return;
         };
-        position.latitude = f64::NAN;
+        for latitude in [f64::NAN, 90.5, -91.0] {
+            let mut bad = position.clone();
+            bad.latitude = latitude;
+            assert!(NiemXmlCodec
+                .encode(&C2Message::PositionReport(bad))
+                .is_err());
+        }
+        let mut short_name = position.clone();
+        short_name.reporting_unit = "HQ".to_string();
         assert!(NiemXmlCodec
-            .encode(&C2Message::PositionReport(position))
+            .encode(&C2Message::PositionReport(short_name))
+            .is_err());
+        let mut bad_time = position;
+        bad_time.reported_at = "yesterday".to_string();
+        assert!(NiemXmlCodec
+            .encode(&C2Message::PositionReport(bad_time))
+            .is_err());
+        let C2Message::ContactReport(mut contact) = messages().remove(0) else {
+            return;
+        };
+        contact.observed_at = "2026-09-29T14:30:00-07:00".to_string();
+        assert!(NiemXmlCodec
+            .encode(&C2Message::ContactReport(contact))
             .is_err());
     }
 

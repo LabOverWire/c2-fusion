@@ -5,13 +5,13 @@ This guide explains how to build and run the proof of concept, what each step sh
 ## What the POC demonstrates
 
 - A canonical, format-independent C2 message model with a pluggable codec layer, so a wire format is a codec rather than a change to the core.
-- Round-trip fidelity: the same canonical message survives encode and decode through each wire format (`niem-xml`, MTF-XML, `c2-json` and `compact-bin` in this POC).
+- Round-trip fidelity: the same canonical message survives encode and decode through each wire format (`niem-xml`, `niem-json`, `coie-text`, MTF-XML, `c2-json` and `compact-bin` in this POC).
 - A codec-bounded exchange: two nodes that ingest different wire formats converge to one shared picture and can re-export it in a single format.
 - Discovery and presence through an MQDB broker: nodes register under `$DB/peers`, find each other, and maintain a heartbeat-renewed TTL lease.
 - Peer-to-peer convergence over QUIC whose safety property is machine-checked in TLA+ (in the sibling `stitch-rs` repo).
 - DDIL behaviour in a containerised harness: converge, hold under a degraded link, partition with a write injected during the outage, and reconverge on reconnection, with presence reflecting the partition.
 
-What the POC does not claim: APP-11 / ADatP-3 or NCDF conformance (the `mtf-xml` codec is a representative stand-in), or a NIEM JSON-LD exchange (the `niem-xml` codec covers NIEM 6.0 XML only, validated against the official schemas); there is no RF ingest; and the bearer profile numbers are placeholders. Those are the funded work, not present capability.
+What the POC does not claim: APP-11 / ADatP-3 or NCDF conformance (the `mtf-xml` codec is a representative stand-in, and `coie-text` follows the public ADatP-3 structure with provisional set definitions); there is no RF ingest; and the bearer profile numbers are placeholders. Those are the funded work, not present capability.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ Platform note: `tc`/`netem` shaping runs inside the Linux containers, not on the
 ## Repository layout
 
 - `crates/c2-model`: the canonical message model (contact report, situation report, request for information, own-unit position report), each tagged with an operational domain and functional service.
-- `crates/c2-codec`: the `Codec` trait, a registry, and four codecs: `niem-xml` (NIEM 6.0 XML messages; schemas, samples and conformance statement in `crates/c2-codec/schemas/niem/`), `mtf-xml` (a flat XML stand-in for APP-11 XML-MTF), `c2-json` (the canonical model as plain JSON) and `compact-bin` (a binary encoding for low-bandwidth radio).
+- `crates/c2-codec`: the `Codec` trait, a registry, and six codecs: `niem-xml` and `niem-json` (NIEM 6.0 messages in XML and JSON-LD; schemas, samples and conformance statement in `crates/c2-codec/schemas/niem/`), `coie-text` (character-oriented slash-delimited messages on the public ADatP-3 / US MTF structure; format and provenance in `docs/coie-text.md`), `mtf-xml` (a flat XML stand-in for APP-11 XML-MTF), `c2-json` (the canonical model as plain JSON) and `compact-bin` (a binary encoding for low-bandwidth radio).
 - `crates/c2-exchange`: the ingest and egress boundary over the stitch-p2p store.
 - `crates/c2-node`: the node binary that registers with an MQDB broker, discovers peers, and bridges them into the sync session over QUIC.
 - `harness/`: the DDIL emulation environment (broker plus three nodes) and the scripts described below.
@@ -45,7 +45,7 @@ What to look for: every test binary reports `test result: ok`, clippy finishes w
 What the key tests prove, and how to confirm:
 
 - Format-agnostic round-trip (`crates/c2-codec`): `contact_report_round_trips_with_special_chars_and_floats`, `rfi_round_trips`, `sitrep_round_trips_with_integer_field`, and `same_message_round_trips_through_every_registered_codec`. These encode a canonical message to a wire format and decode it back, asserting equality. Confirm it yourself by running `cargo test -p c2-codec` and reading the passing names; to see a test actually exercise the claim, open `crates/c2-codec/src/mtf_xml.rs` or `json.rs` and read the round-trip assertion.
-- NIEM 6.0 conformance (`crates/c2-codec/src/niem_xml.rs`): `every_encoded_message_validates_against_the_niem_schemas` encodes one message of each type and validates it with `xmllint` against the official NIEM 6.0 schemas and the c2-fusion extension schema; `published_samples_validate_and_decode` does the same for the sample instances, and `schema_rejects_an_invalid_instance` shows the validator rejects an out-of-range latitude. Run `cargo test -p c2-codec niem_xml` (needs libxml2's `xmllint`); the schemas, samples and conformance statement are in `crates/c2-codec/schemas/niem/`.
+- NIEM 6.0 conformance (`crates/c2-codec/src/niem_xml.rs` and `niem_json.rs`): `every_encoded_message_validates_against_the_niem_schemas` encodes one message of each type and validates it with `xmllint` against the official NIEM 6.0 schemas and the c2-fusion extension schema; `published_samples_validate_and_decode` does the same for the sample instances, and `schema_rejects_an_invalid_instance` shows the validator rejects an out-of-range latitude. The `niem-json` tests do the same for the JSON-LD form against the JSON schema generated by NIEMOpen's `cmftool`. Run `cargo test -p c2-codec niem` (needs libxml2's `xmllint`); the schemas, samples and conformance statement are in `crates/c2-codec/schemas/niem/`.
 - Codec registry behaviour: `registry_exposes_every_format`, `unknown_format_is_none`, `missing_root_is_decode_error`. These confirm the registry lists every format and rejects unknown or malformed input rather than guessing.
 - Codec-bounded convergence (`crates/c2-exchange/tests/codec_ingest.rs`): `two_wire_formats_converge_to_one_picture_and_reexport` ingests one message in MTF-XML and another in `c2-json` on two separate stores, syncs them, and asserts both reach the same picture and can re-export it in one format. This is the core "different formats in, one shared picture out" claim. Run `cargo test -p c2-exchange` and confirm it passes; read the test body to see the two formats go in and the single re-export come out.
 

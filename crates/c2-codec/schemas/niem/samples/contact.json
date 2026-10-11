@@ -1,0 +1,60 @@
+{
+  "@context": {
+    "c2f": "https://laboverwire.com/ns/c2-fusion/1.0/",
+    "mo": "https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/",
+    "nc": "https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/",
+    "usmtf": "https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  },
+  "c2f:ContactReportMessage": {
+    "c2f:FunctionalServiceCode": "INTELLIGENCE",
+    "c2f:OperationalDomainCode": "AIR",
+    "mo:Observation": {
+      "mo:ObservationDateTime": [
+        "2026-09-29T14:30:00Z"
+      ],
+      "mo:ObservedObjectLocation": [
+        {
+          "mo:ObservedObject2DGeospatialCoordinate": [
+            {
+              "nc:GeographicCoordinateLatitude": {
+                "nc:LatitudeDegreeValue": [
+                  45.5017
+                ]
+              },
+              "nc:GeographicCoordinateLongitude": {
+                "nc:LongitudeDegreeValue": [
+                  -73.5673
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "nc:DocumentAuthor": [
+      {
+        "nc:EntityOrganization": [
+          {
+            "nc:OrganizationName": [
+              {
+                "nc:TextLiteral": "UAV-7"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "nc:DocumentDescriptionText": [
+      {
+        "nc:TextLiteral": "Vehicle stationary"
+      }
+    ],
+    "nc:DocumentIdentification": [
+      {
+        "nc:IdentificationID": [
+          "C-1"
+        ]
+      }
+    ]
+  }
+}

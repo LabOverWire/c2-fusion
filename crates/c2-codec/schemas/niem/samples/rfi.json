@@ -1,0 +1,38 @@
+{
+  "@context": {
+    "c2f": "https://laboverwire.com/ns/c2-fusion/1.0/",
+    "mo": "https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/",
+    "nc": "https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/",
+    "usmtf": "https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  },
+  "c2f:InformationRequestMessage": {
+    "c2f:FunctionalServiceCode": "LOGISTICS",
+    "c2f:OperationalDomainCode": "MARITIME",
+    "c2f:RequestingOrganization": {
+      "nc:OrganizationName": [
+        {
+          "nc:TextLiteral": "HQ-1"
+        }
+      ]
+    },
+    "nc:RequestDate": [
+      {
+        "nc:DateTime": [
+          "2026-09-29T16:00:00Z"
+        ]
+      }
+    ],
+    "nc:RequestIdentification": [
+      {
+        "nc:IdentificationID": [
+          "RFI-42"
+        ]
+      }
+    ],
+    "nc:RequestText": [
+      {
+        "nc:TextLiteral": "Fuel state?"
+      }
+    ]
+  }
+}

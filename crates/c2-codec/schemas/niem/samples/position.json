@@ -1,0 +1,49 @@
+{
+  "@context": {
+    "c2f": "https://laboverwire.com/ns/c2-fusion/1.0/",
+    "mo": "https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/",
+    "nc": "https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/",
+    "usmtf": "https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  },
+  "c2f:PositionReportMessage": {
+    "c2f:FunctionalServiceCode": "COMMAND_AND_CONTROL",
+    "c2f:OperationalDomainCode": "LAND",
+    "mo:Unit": {
+      "mo:UnitName": [
+        "node-a"
+      ],
+      "mo:UnitPresentLocation": [
+        {
+          "nc:Location2DGeospatialCoordinate": [
+            {
+              "nc:GeographicCoordinateLatitude": {
+                "nc:LatitudeDegreeValue": [
+                  45.5017
+                ]
+              },
+              "nc:GeographicCoordinateLongitude": {
+                "nc:LongitudeDegreeValue": [
+                  -73.5673
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "nc:DocumentCreationDate": [
+      {
+        "nc:DateTime": [
+          "2026-10-11T00:45:00Z"
+        ]
+      }
+    ],
+    "nc:DocumentIdentification": [
+      {
+        "nc:IdentificationID": [
+          "POS-node-a"
+        ]
+      }
+    ]
+  }
+}

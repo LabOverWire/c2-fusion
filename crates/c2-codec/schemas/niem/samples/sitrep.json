@@ -1,0 +1,45 @@
+{
+  "@context": {
+    "c2f": "https://laboverwire.com/ns/c2-fusion/1.0/",
+    "mo": "https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/",
+    "nc": "https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/",
+    "usmtf": "https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  },
+  "c2f:SituationReportMessage": {
+    "c2f:FunctionalServiceCode": "COMMAND_AND_CONTROL",
+    "c2f:OperationalDomainCode": "LAND",
+    "nc:DocumentAuthor": [
+      {
+        "nc:EntityOrganization": [
+          {
+            "nc:OrganizationName": [
+              {
+                "nc:TextLiteral": "Coy-A"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "nc:DocumentCreationDate": [
+      {
+        "nc:DateTime": [
+          "2026-09-29T15:00:00Z"
+        ]
+      }
+    ],
+    "nc:DocumentIdentification": [
+      {
+        "nc:IdentificationID": [
+          "S-1"
+        ]
+      }
+    ],
+    "nc:DocumentSummaryText": [
+      {
+        "nc:TextLiteral": "Holding position"
+      }
+    ],
+    "usmtf:AvailablePersonnelQuantity": 118
+  }
+}

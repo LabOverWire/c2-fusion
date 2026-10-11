@@ -1,8 +1,12 @@
 use c2_model::C2Message;
 
+mod codes;
+pub mod coie_text;
 pub mod compact;
 pub mod json;
 pub mod mtf_xml;
+pub mod niem;
+pub mod niem_json;
 pub mod niem_xml;
 
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +37,8 @@ impl Registry {
                 Box::new(json::JsonCodec),
                 Box::new(compact::CompactCodec),
                 Box::new(niem_xml::NiemXmlCodec),
+                Box::new(coie_text::CoieTextCodec),
+                Box::new(niem_json::NiemJsonCodec),
             ],
         }
     }
@@ -84,7 +90,14 @@ mod tests {
         formats.sort();
         assert_eq!(
             formats,
-            vec!["c2-json", "compact-bin", "mtf-xml", "niem-xml"]
+            vec![
+                "c2-json",
+                "coie-text",
+                "compact-bin",
+                "mtf-xml",
+                "niem-json",
+                "niem-xml"
+            ]
         );
     }
 
