@@ -45,7 +45,7 @@ Once it has a fix and its clock is disciplined, the node also shares its own pos
 - `/etc/default/c2-node`: one `KEY=value` setting per line, read (not executed) at start.
 - `/opt/c2/run.sh`: unless GNSS is enabled, waits up to 120 seconds for NTP to set the clock (the board has no RTC and boots at 1970); with GNSS, swaps the ntpd daemon for a one-shot sync. It then applies the `C2_PINMUX` pin routing and runs the node with its output sent to syslog.
 - A `::respawn:/opt/c2/run.sh` line in `/etc/inittab`, so busybox init starts the node at boot and restarts it if it exits.
-- `/opt/c2/inbox`: drop NIEM JSON messages here and the node ingests them into the shared picture.
+- `/opt/c2/inbox`: drop messages in the canonical JSON format (`c2-json`) here and the node ingests them into the shared picture.
 
 ## Operating
 

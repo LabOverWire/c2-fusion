@@ -27,7 +27,7 @@ ssh -o "$known_hosts" "$target" 'cat > /opt/c2/c2-node.new && chmod 755 /opt/c2/
 ssh -o "$known_hosts" "$target" 'cat > /opt/c2/run.sh && chmod 755 /opt/c2/run.sh' < "$here/run.sh"
 {
     printf 'C2_NAME=%s\nC2_BROKER=%s\nC2_BROKER_USER=%s\nC2_BROKER_PASS=%s\n' "$name" "$broker" "$user" "$pass"
-    printf 'C2_INBOX=/opt/c2/inbox\nC2_INBOX_FMT=niem-json\nC2_PICTURE_INTERVAL_MS=60000\nC2_STORE_DIR=/opt/c2/store\n'
+    printf 'C2_INBOX=/opt/c2/inbox\nC2_INBOX_FMT=c2-json\nC2_PICTURE_INTERVAL_MS=60000\nC2_STORE_DIR=/opt/c2/store\n'
     pinmux=""
     if [ -n "$lora_address" ]; then
         pinmux="B11/UART2_TX,B12/UART2_RX"

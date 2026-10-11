@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
     ));
 
     if let Ok(inbox) = env_req("C2_INBOX") {
-        let fmt = env_or("C2_INBOX_FMT", "niem-json");
+        let fmt = env_or("C2_INBOX_FMT", "c2-json");
         tasks.push(tokio::spawn(run_inbox(
             Arc::clone(&store),
             name.clone(),

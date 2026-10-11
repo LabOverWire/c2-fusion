@@ -5,7 +5,7 @@ This guide explains how to build and run the proof of concept, what each step sh
 ## What the POC demonstrates
 
 - A canonical, format-independent C2 message model with a pluggable codec layer, so a wire format is a codec rather than a change to the core.
-- Round-trip fidelity: the same canonical message survives encode and decode through each wire format (MTF-XML and NIEM-JSON in this POC).
+- Round-trip fidelity: the same canonical message survives encode and decode through each wire format (MTF-XML, `c2-json` and `compact-bin` in this POC).
 - A codec-bounded exchange: two nodes that ingest different wire formats converge to one shared picture and can re-export it in a single format.
 - Discovery and presence through an MQDB broker: nodes register under `$DB/peers`, find each other, and maintain a heartbeat-renewed TTL lease.
 - Peer-to-peer convergence over QUIC whose safety property is machine-checked in TLA+ (in the sibling `stitch-rs` repo).
@@ -25,7 +25,7 @@ Platform note: `tc`/`netem` shaping runs inside the Linux containers, not on the
 ## Repository layout
 
 - `crates/c2-model`: the canonical message model (contact report, situation report, request for information, own-unit position report), each tagged with an operational domain and functional service.
-- `crates/c2-codec`: the `Codec` trait, a registry, and two codecs, `mtf-xml` and `niem-json`.
+- `crates/c2-codec`: the `Codec` trait, a registry, and three codecs: `mtf-xml` (a flat XML stand-in for APP-11 XML-MTF), `c2-json` (the canonical model as plain JSON) and `compact-bin` (a binary encoding for low-bandwidth radio).
 - `crates/c2-exchange`: the ingest and egress boundary over the stitch-p2p store.
 - `crates/c2-node`: the node binary that registers with an MQDB broker, discovers peers, and bridges them into the sync session over QUIC.
 - `harness/`: the DDIL emulation environment (broker plus three nodes) and the scripts described below.
@@ -44,9 +44,9 @@ What to look for: every test binary reports `test result: ok`, clippy finishes w
 
 What the key tests prove, and how to confirm:
 
-- Format-agnostic round-trip (`crates/c2-codec`): `contact_report_round_trips_with_special_chars_and_floats`, `rfi_round_trips`, `sitrep_round_trips_with_integer_field`, and `same_message_round_trips_through_every_registered_codec`. These encode a canonical message to a wire format and decode it back, asserting equality. Confirm it yourself by running `cargo test -p c2-codec` and reading the passing names; to see a test actually exercise the claim, open `crates/c2-codec/src/mtf_xml.rs` or `niem.rs` and read the round-trip assertion.
-- Codec registry behaviour: `registry_exposes_both_formats`, `unknown_format_is_none`, `missing_root_is_decode_error`. These confirm the registry lists the two formats and rejects unknown or malformed input rather than guessing.
-- Codec-bounded convergence (`crates/c2-exchange/tests/codec_ingest.rs`): `two_wire_formats_converge_to_one_picture_and_reexport` ingests one message in MTF-XML and another in NIEM-JSON on two separate stores, syncs them, and asserts both reach the same picture and can re-export it in one format. This is the core "different formats in, one shared picture out" claim. Run `cargo test -p c2-exchange` and confirm it passes; read the test body to see the two formats go in and the single re-export come out.
+- Format-agnostic round-trip (`crates/c2-codec`): `contact_report_round_trips_with_special_chars_and_floats`, `rfi_round_trips`, `sitrep_round_trips_with_integer_field`, and `same_message_round_trips_through_every_registered_codec`. These encode a canonical message to a wire format and decode it back, asserting equality. Confirm it yourself by running `cargo test -p c2-codec` and reading the passing names; to see a test actually exercise the claim, open `crates/c2-codec/src/mtf_xml.rs` or `json.rs` and read the round-trip assertion.
+- Codec registry behaviour: `registry_exposes_every_format`, `unknown_format_is_none`, `missing_root_is_decode_error`. These confirm the registry lists every format and rejects unknown or malformed input rather than guessing.
+- Codec-bounded convergence (`crates/c2-exchange/tests/codec_ingest.rs`): `two_wire_formats_converge_to_one_picture_and_reexport` ingests one message in MTF-XML and another in `c2-json` on two separate stores, syncs them, and asserts both reach the same picture and can re-export it in one format. This is the core "different formats in, one shared picture out" claim. Run `cargo test -p c2-exchange` and confirm it passes; read the test body to see the two formats go in and the single re-export come out.
 
 If any check fails, that is a real failure to investigate, not noise. The suite is expected to be green.
 

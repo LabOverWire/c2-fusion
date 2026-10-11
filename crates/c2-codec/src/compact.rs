@@ -301,7 +301,7 @@ fn service_from(code: u8) -> Result<FunctionalService, CodecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::niem::NiemCodec;
+    use crate::json::JsonCodec;
 
     fn contact() -> C2Message {
         C2Message::ContactReport(ContactReport {
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn contact_report_is_much_smaller_than_json() {
         let compact = CompactCodec.encode(&contact()).expect("encode");
-        let json = NiemCodec.encode(&contact()).expect("encode");
+        let json = JsonCodec.encode(&contact()).expect("encode");
         assert_eq!(compact.len(), 68);
         assert!(compact.len() * 3 < json.len());
     }

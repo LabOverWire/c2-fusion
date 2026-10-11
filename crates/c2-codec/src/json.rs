@@ -1,11 +1,11 @@
 use crate::{Codec, CodecError};
 use c2_model::C2Message;
 
-pub struct NiemCodec;
+pub struct JsonCodec;
 
-impl Codec for NiemCodec {
+impl Codec for JsonCodec {
     fn wire_format(&self) -> &'static str {
-        "niem-json"
+        "c2-json"
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
@@ -32,7 +32,7 @@ mod tests {
             requested_at: "2026-09-23T15:00:00Z".to_string(),
             question: "Confirm bridge status at grid 12AB".to_string(),
         });
-        let codec = NiemCodec;
+        let codec = JsonCodec;
         let bytes = codec.encode(&msg).unwrap();
         assert_eq!(codec.decode(&bytes).unwrap(), msg);
     }

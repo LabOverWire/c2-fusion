@@ -1,12 +1,7 @@
-//! The codec boundary end to end: messages arrive on two nodes in two different
-//! wire formats, converge into one shared picture, and the picture is re-exported
-//! in a single format. This is essential outcomes 3 and 4 (standards-compliant
-//! import/export/exchange, format-agnostic core) demonstrated over the p2p layer.
-
 use std::time::Duration;
 
+use c2_codec::json::JsonCodec;
 use c2_codec::mtf_xml::MtfXmlCodec;
-use c2_codec::niem::NiemCodec;
 use c2_codec::{Codec, Registry};
 use c2_exchange::{ingest_wire, ingest_wire_with, picture, picture_encoded};
 use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Sitrep};
@@ -16,11 +11,9 @@ use tokio::task::JoinHandle;
 
 const PULL: Duration = Duration::from_millis(20);
 
-// A contact report as it would arrive on the wire in XML Message Text Format.
 const CONTACT_MTF_XML: &str = "<c2message><message_type>ContactReport</message_type><id>C-1</id><reporting_unit>UAV-7</reporting_unit><domain>Air</domain><service>Intelligence</service><observed_at>2026-09-29T14:30:00Z</observed_at><latitude>49.2827</latitude><longitude>-123.1207</longitude><description>Vehicle stationary</description></c2message>";
 
-// A situation report as it would arrive on the wire in NIEM-style JSON.
-const SITREP_NIEM_JSON: &str = r#"{"message_type":"Sitrep","id":"S-1","reporting_unit":"Coy-A","domain":"Land","service":"CommandAndControl","reported_at":"2026-09-29T15:00:00Z","summary":"Holding position","personnel_effective":118}"#;
+const SITREP_C2_JSON: &str = r#"{"message_type":"Sitrep","id":"S-1","reporting_unit":"Coy-A","domain":"Land","service":"CommandAndControl","reported_at":"2026-09-29T15:00:00Z","summary":"Holding position","personnel_effective":118}"#;
 
 fn expected_contact() -> C2Message {
     C2Message::ContactReport(ContactReport {
@@ -90,11 +83,10 @@ async fn two_wire_formats_converge_to_one_picture_and_reexport() {
     let edge = Store::new(peer(1));
     let hq = Store::new(peer(2));
 
-    // Each node receives a message in a different wire format.
     let a = ingest_wire(&edge, &MtfXmlCodec, CONTACT_MTF_XML.as_bytes())
         .await
         .unwrap();
-    let b = ingest_wire(&hq, &NiemCodec, SITREP_NIEM_JSON.as_bytes())
+    let b = ingest_wire(&hq, &JsonCodec, SITREP_C2_JSON.as_bytes())
         .await
         .unwrap();
     assert_eq!(a, expected_contact());
@@ -118,12 +110,10 @@ async fn two_wire_formats_converge_to_one_picture_and_reexport() {
     assert_eq!(pic.get("C-1"), Some(&expected_contact()));
     assert_eq!(pic.get("S-1"), Some(&expected_sitrep()));
 
-    // The converged picture, assembled from XML and JSON inputs, re-exports in a
-    // single format. The XML-sourced contact report comes back out as NIEM JSON.
-    let exported = picture_encoded(&edge, &NiemCodec).await.unwrap();
+    let exported = picture_encoded(&edge, &JsonCodec).await.unwrap();
     assert_eq!(exported.len(), 2);
     let contact_json = exported.get("C-1").unwrap();
-    assert_eq!(NiemCodec.decode(contact_json).unwrap(), expected_contact());
+    assert_eq!(JsonCodec.decode(contact_json).unwrap(), expected_contact());
 }
 
 #[tokio::test]

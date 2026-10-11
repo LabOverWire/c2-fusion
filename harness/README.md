@@ -6,7 +6,7 @@ Runs an MQDB broker and three c2-fusion nodes as containers on a Docker bridge, 
 
 `./run.sh` builds the images and drives the full sequence end to end:
 
-1. Bring up an MQDB broker and three nodes (edge, relay, hq). Each node registers with the broker and discovers the others through it; each ingests one message in a wire format (edge in MTF-XML, relay and hq in NIEM-JSON).
+1. Bring up an MQDB broker and three nodes (edge, relay, hq). Each node registers with the broker and discovers the others through it; each ingests one message in a wire format (edge in MTF-XML, relay and hq in `c2-json`, the canonical model as plain JSON).
 2. Converge: the nodes connect peer-to-peer over QUIC and reach the same 3-message picture.
 3. Degrade: apply a `tc`/`netem` rate and delay profile to the edge uplink; the picture holds.
 4. Partition: disconnect edge from the network (it loses both the broker and its peers). While isolated it can no longer renew its presence lease, so its `$DB/peers` record expires while relay and hq keep renewing theirs.

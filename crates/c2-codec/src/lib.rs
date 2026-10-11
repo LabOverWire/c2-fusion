@@ -1,8 +1,8 @@
 use c2_model::C2Message;
 
 pub mod compact;
+pub mod json;
 pub mod mtf_xml;
-pub mod niem;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
@@ -29,7 +29,7 @@ impl Registry {
         Self {
             codecs: vec![
                 Box::new(mtf_xml::MtfXmlCodec),
-                Box::new(niem::NiemCodec),
+                Box::new(json::JsonCodec),
                 Box::new(compact::CompactCodec),
             ],
         }
@@ -80,7 +80,7 @@ mod tests {
         let reg = Registry::with_defaults();
         let mut formats = reg.wire_formats();
         formats.sort();
-        assert_eq!(formats, vec!["compact-bin", "mtf-xml", "niem-json"]);
+        assert_eq!(formats, vec!["c2-json", "compact-bin", "mtf-xml"]);
     }
 
     #[test]
