@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+  targetNamespace="https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  version="ps02"
+  xml:lang="en-US"
+  xsi:schemaLocation="https://docs.oasis-open.org/niemopen/ns/model/appinfo/6.0/ ../utility/appinfo.xsd https://docs.oasis-open.org/niemopen/ns/specification/conformanceTargets/6.0/ ../utility/conformanceTargets.xsd"
+  ct:conformanceTargets="https://docs.oasis-open.org/niemopen/ns/specification/NDR/6.0/#SubsetSchemaDocument"
+  xmlns:appinfo="https://docs.oasis-open.org/niemopen/ns/model/appinfo/6.0/"
+  xmlns:ct="https://docs.oasis-open.org/niemopen/ns/specification/conformanceTargets/6.0/"
+  xmlns:structures="https://docs.oasis-open.org/niemopen/ns/model/structures/6.0/"
+  xmlns:usmtf="https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <xs:annotation>
+    <xs:documentation>Military Operations subdomain based on United States Message Text Format (USMTF)</xs:documentation>
+    <xs:documentation>
+      Subset of the NIEM Model Version 6.0 usmtf domain schema containing only the components used by the c2-fusion exchange.
+      Copyright (c) OASIS Open 2025. All Rights Reserved.
+      Source: https://docs.oasis-open.org/niemopen/niem-model/v6.0/os/
+      License: https://github.com/niemopen/niem-model/blob/main/LICENSE.md.
+      This work is licensed under a Creative Commons Attribution 4.0 International License:
+      CC BY 4.0: Attribution 4.0 International, https://creativecommons.org/licenses/by/4.0/.
+    </xs:documentation>
+  </xs:annotation>
+  <xs:import namespace="https://docs.oasis-open.org/niemopen/ns/model/structures/6.0/" schemaLocation="../utility/structures.xsd"/>
+  <xs:simpleType name="Integer0To9999SimpleType">
+    <xs:annotation>
+      <xs:documentation>A data type for integer values from 0 to 9999.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:integer"/>
+  </xs:simpleType>
+  <xs:complexType name="Integer0To9999Type">
+    <xs:annotation>
+      <xs:documentation>A data type for integer values from 0 to 9999.</xs:documentation>
+    </xs:annotation>
+    <xs:simpleContent>
+      <xs:extension base="usmtf:Integer0To9999SimpleType">
+        <xs:attributeGroup ref="structures:SimpleObjectAttributeGroup"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:element name="AvailablePersonnelQuantity" type="usmtf:Integer0To9999Type" nillable="true">
+    <xs:annotation>
+      <xs:documentation>An actual number of personnel available for the task or mission.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+</xs:schema>

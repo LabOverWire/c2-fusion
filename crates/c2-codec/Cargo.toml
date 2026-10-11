@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 bebytes = "3.0.3"
 c2-model = { path = "../c2-model" }
+quick-xml = "0.42.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

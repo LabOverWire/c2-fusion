@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+  targetNamespace="https://laboverwire.com/ns/c2-fusion/1.0/"
+  version="1"
+  xml:lang="en-US"
+  xsi:schemaLocation="https://docs.oasis-open.org/niemopen/ns/model/appinfo/6.0/ ../6.0/utility/appinfo.xsd https://docs.oasis-open.org/niemopen/ns/specification/conformanceTargets/6.0/ ../6.0/utility/conformanceTargets.xsd"
+  ct:conformanceTargets="https://docs.oasis-open.org/niemopen/ns/specification/NDR/6.0/#ExtensionSchemaDocument"
+  xmlns:c2f="https://laboverwire.com/ns/c2-fusion/1.0/"
+  xmlns:ct="https://docs.oasis-open.org/niemopen/ns/specification/conformanceTargets/6.0/"
+  xmlns:mo="https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/"
+  xmlns:nc="https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/"
+  xmlns:structures="https://docs.oasis-open.org/niemopen/ns/model/structures/6.0/"
+  xmlns:usmtf="https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/"
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <xs:annotation>
+    <xs:documentation>Message types for the c2-fusion command and control exchange: contact reports, situation reports, requests for information and own-unit position reports, each tagged with an operational domain and a functional service.</xs:documentation>
+  </xs:annotation>
+  <xs:import namespace="https://docs.oasis-open.org/niemopen/ns/model/niem-core/6.0/" schemaLocation="../6.0/niem-core.xsd"/>
+  <xs:import namespace="https://docs.oasis-open.org/niemopen/ns/model/domains/militaryOperations/6.0/" schemaLocation="../6.0/domains/mo.xsd"/>
+  <xs:import namespace="https://docs.oasis-open.org/niemopen/ns/model/domains/usmtf/6.0/" schemaLocation="../6.0/domains/mo-usmtf.xsd"/>
+  <xs:import namespace="https://docs.oasis-open.org/niemopen/ns/model/structures/6.0/" schemaLocation="../6.0/utility/structures.xsd"/>
+  <xs:simpleType name="OperationalDomainCodeSimpleType">
+    <xs:annotation>
+      <xs:documentation>A data type for an operational domain in which a reported activity takes place.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="LAND">
+        <xs:annotation>
+          <xs:documentation>Land</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="AIR">
+        <xs:annotation>
+          <xs:documentation>Air</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="MARITIME">
+        <xs:annotation>
+          <xs:documentation>Maritime</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="SPACE">
+        <xs:annotation>
+          <xs:documentation>Space</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="CYBER">
+        <xs:annotation>
+          <xs:documentation>Cyberspace</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:complexType name="OperationalDomainCodeType">
+    <xs:annotation>
+      <xs:documentation>A data type for an operational domain in which a reported activity takes place.</xs:documentation>
+    </xs:annotation>
+    <xs:simpleContent>
+      <xs:extension base="c2f:OperationalDomainCodeSimpleType">
+        <xs:attributeGroup ref="structures:SimpleObjectAttributeGroup"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:simpleType name="FunctionalServiceCodeSimpleType">
+    <xs:annotation>
+      <xs:documentation>A data type for a functional service that a message supports.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="COMMAND_AND_CONTROL">
+        <xs:annotation>
+          <xs:documentation>Command and control</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="INTELLIGENCE">
+        <xs:annotation>
+          <xs:documentation>Intelligence</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="LOGISTICS">
+        <xs:annotation>
+          <xs:documentation>Logistics</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="MEDICAL">
+        <xs:annotation>
+          <xs:documentation>Medical</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:complexType name="FunctionalServiceCodeType">
+    <xs:annotation>
+      <xs:documentation>A data type for a functional service that a message supports.</xs:documentation>
+    </xs:annotation>
+    <xs:simpleContent>
+      <xs:extension base="c2f:FunctionalServiceCodeSimpleType">
+        <xs:attributeGroup ref="structures:SimpleObjectAttributeGroup"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="ContactReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A data type for a report of an observed contact.</xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="nc:ReportType">
+        <xs:sequence>
+          <xs:element ref="mo:Observation" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:OperationalDomainCode" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:FunctionalServiceCode" minOccurs="1" maxOccurs="1"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="SituationReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A data type for a report of a unit's situation and effective strength.</xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="nc:ReportType">
+        <xs:sequence>
+          <xs:element ref="usmtf:AvailablePersonnelQuantity" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:OperationalDomainCode" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:FunctionalServiceCode" minOccurs="1" maxOccurs="1"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="InformationRequestMessageType">
+    <xs:annotation>
+      <xs:documentation>A data type for a request for information.</xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="nc:RequestType">
+        <xs:sequence>
+          <xs:element ref="c2f:RequestingOrganization" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:OperationalDomainCode" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:FunctionalServiceCode" minOccurs="1" maxOccurs="1"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="PositionReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A data type for a report of a unit's own present position.</xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="nc:ReportType">
+        <xs:sequence>
+          <xs:element ref="mo:Unit" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:OperationalDomainCode" minOccurs="1" maxOccurs="1"/>
+          <xs:element ref="c2f:FunctionalServiceCode" minOccurs="1" maxOccurs="1"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:element name="OperationalDomainCode" type="c2f:OperationalDomainCodeType" nillable="true">
+    <xs:annotation>
+      <xs:documentation>An operational domain in which a reported activity takes place.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="FunctionalServiceCode" type="c2f:FunctionalServiceCodeType" nillable="true">
+    <xs:annotation>
+      <xs:documentation>A functional service that a message supports.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="RequestingOrganization" type="nc:OrganizationType" nillable="true">
+    <xs:annotation>
+      <xs:documentation>An organization that makes a request.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="ContactReportMessage" type="c2f:ContactReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A report of an observed contact.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="SituationReportMessage" type="c2f:SituationReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A report of a unit's situation and effective strength.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="InformationRequestMessage" type="c2f:InformationRequestMessageType">
+    <xs:annotation>
+      <xs:documentation>A request for information.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="PositionReportMessage" type="c2f:PositionReportMessageType">
+    <xs:annotation>
+      <xs:documentation>A report of a unit's own present position.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+</xs:schema>

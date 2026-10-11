@@ -29,5 +29,6 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxml2-utils
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
