@@ -10,8 +10,6 @@ const SITREP: u8 = 1;
 const RFI: u8 = 2;
 const POSITION_REPORT: u8 = 3;
 
-const PREFIX_LEN: usize = 2;
-
 pub struct CompactCodec;
 
 #[derive(BeBytes, Debug, Clone, PartialEq)]
@@ -179,12 +177,6 @@ impl Codec for CompactCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
-        if bytes.len() < PREFIX_LEN {
-            return Err(CodecError::Decode(format!(
-                "compact message of {} bytes is shorter than its prefix",
-                bytes.len()
-            )));
-        }
         let (prefix, consumed) = Prefix::try_from_be_bytes(bytes).map_err(malformed)?;
         if prefix.version != VERSION {
             return Err(CodecError::Decode(format!(

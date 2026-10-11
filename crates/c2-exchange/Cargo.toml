@@ -9,9 +9,9 @@ repository.workspace = true
 c2-model = { path = "../c2-model" }
 c2-codec = { path = "../c2-codec" }
 stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store"] }
-serde_json = { workspace = true }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 thiserror = { workspace = true }
-bebytes = "3.0.2"
+bebytes = "3.0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "sync"] }

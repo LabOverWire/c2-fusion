@@ -6,4 +6,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-bebytes = { version = "3.0.2", default-features = false }
+bebytes = { version = "3.0.3", default-features = false }

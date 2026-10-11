@@ -16,10 +16,6 @@ const OP_INSERT: u8 = 0;
 const OP_UPDATE: u8 = 1;
 const OP_DELETE: u8 = 2;
 
-const WRITE_FIXED_LEN: usize = 8 + 4 + 32 + 8 + 1 + 1;
-const HELLO_FIXED_LEN: usize = 32 + 1;
-const CURSOR_LEN: usize = 32 + 8;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioMessage {
     Write(WriteFrame),
@@ -46,8 +42,8 @@ pub enum RadioError {
     Malformed(String),
     #[error("{0} trailing bytes")]
     Trailing(usize),
-    #[error("truncated radio message: need {need} bytes, have {have}")]
-    Truncated { need: usize, have: usize },
+    #[error("hello declares {declared} cursors but carries {carried}")]
+    CursorCount { declared: u8, carried: usize },
 }
 
 #[derive(BeBytes, Debug, Clone, PartialEq)]
@@ -127,7 +123,6 @@ fn encode_write(frame: &WriteFrame) -> Result<Vec<u8>, RadioError> {
 }
 
 fn decode_write(bytes: &[u8]) -> Result<WriteFrame, RadioError> {
-    at_least(bytes, WRITE_FIXED_LEN)?;
     let wire: WriteWire = whole(bytes)?;
     let data = match wire.body_kind {
         BODY_JSON => wire.body,
@@ -171,9 +166,13 @@ fn encode_hello(from: &PeerId, cursors: &Cursors) -> Result<Vec<u8>, RadioError>
 }
 
 fn decode_hello(bytes: &[u8]) -> Result<RadioMessage, RadioError> {
-    at_least(bytes, HELLO_FIXED_LEN)?;
-    at_least(bytes, HELLO_FIXED_LEN + usize::from(bytes[32]) * CURSOR_LEN)?;
     let wire: HelloWire = whole(bytes)?;
+    if wire.cursors.len() != usize::from(wire.count) {
+        return Err(RadioError::CursorCount {
+            declared: wire.count,
+            carried: wire.cursors.len(),
+        });
+    }
     Ok(RadioMessage::Hello {
         from: wire.from,
         cursors: wire
@@ -211,16 +210,6 @@ fn whole<T: BeBytes>(bytes: &[u8]) -> Result<T, RadioError> {
     match bytes.len() - consumed {
         0 => Ok(wire),
         extra => Err(RadioError::Trailing(extra)),
-    }
-}
-
-fn at_least(bytes: &[u8], need: usize) -> Result<(), RadioError> {
-    match bytes.len() >= need {
-        true => Ok(()),
-        false => Err(RadioError::Truncated {
-            need,
-            have: bytes.len(),
-        }),
     }
 }
 
@@ -299,6 +288,26 @@ mod tests {
             RadioMessage::decode(&bytes).expect("decode"),
             RadioMessage::Write(original)
         );
+    }
+
+    #[test]
+    fn gnss_derived_coordinates_always_travel_compact() {
+        for step in 0..2000u32 {
+            let minutes = f64::from(step) * 0.000_137;
+            let msg = C2Message::PositionReport(PositionReport {
+                id: "POS-node-a".to_string(),
+                reporting_unit: "node-a".to_string(),
+                domain: Domain::Land,
+                service: FunctionalService::CommandAndControl,
+                reported_at: "2026-10-11T00:45:00Z".to_string(),
+                latitude: 45.0 + (30.0 + minutes) / 60.0,
+                longitude: -(73.0 + (34.0 + minutes) / 60.0),
+            });
+            let bytes = RadioMessage::Write(frame(ENTITY, stored(&msg)))
+                .encode()
+                .expect("encode");
+            assert_eq!(bytes.len(), 129, "step {step}");
+        }
     }
 
     #[test]
