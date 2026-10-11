@@ -35,6 +35,17 @@ The receiver's own USB-C stays unplugged while VCC is wired. At start the node a
 
 Once it has a fix and its clock is disciplined, the node also shares its own position every `C2_POSITION_INTERVAL_S` seconds (default 60) as a `PositionReport` with id `POS-<name>`: it goes into the shared picture and out over LoRa. Every report reuses the same id, so the picture holds the latest position of each node.
 
+## Power
+
+Before starting the node, `run.sh` turns off what a field node does not use:
+
+- Ethernet is brought down unless `C2_ETHERNET=on`. With no cable attached, the Ethernet driver keeps retrying link detection in a kernel worker; on node-b this held the CPU at about 60% busy, and taking `eth0` down brought both boards to about 3%.
+- The stock image's status LED loop (`/mnt/system/blink.sh`, started by `S99user`, toggling every 0.5 s) is stopped and the LED left off.
+- `bluetoothd` is stopped.
+- `C2_WIFI=off` also stops `wpa_supplicant` and brings `wlan0` down, for running on battery out of Wi-Fi range. Without Wi-Fi the board is reachable only over the USB link, so it stays on by default.
+
+`install.sh` writes `C2_ETHERNET` (default `off`) and `C2_WIFI` (default `on`) from the environment.
+
 ## Wi-Fi
 
 `deploy/duo-s/wifi.sh <board-host> <ssid> < passphrase-file` joins a WPA2 network. The key is derived on the host (PBKDF2, as `wpa_passphrase` does), so the plaintext passphrase never reaches the board; `/etc/wpa_supplicant.conf` holds only the derived key and is root-only. Re-running replaces the network's key. `/etc/init.d/S99wifi` starts `wpa_supplicant` at boot once the AIC8800 driver has created `wlan0`, and `dhcpcd` takes the address.

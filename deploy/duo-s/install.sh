@@ -39,6 +39,7 @@ ssh -o "$known_hosts" "$target" 'cat > /opt/c2/run.sh && chmod 755 /opt/c2/run.s
         pinmux="${pinmux:+$pinmux,}A18/UART1_RX,A19/UART1_TX,A20/A20"
         printf 'C2_GNSS_PORT=/dev/ttyS1\nC2_GNSS_BAUD=%s\nC2_PPS_CHIP=/dev/gpiochip0\nC2_PPS_LINE=20\n' "${C2_GNSS_BAUD:-115200}"
     fi
+    printf 'C2_ETHERNET=%s\nC2_WIFI=%s\n' "${C2_ETHERNET:-off}" "${C2_WIFI:-on}"
     printf 'C2_PINMUX=%s\n' "$pinmux"
 } | ssh -o "$known_hosts" "$target" 'cat > /etc/default/c2-node && chmod 600 /etc/default/c2-node'
 ssh -o "$known_hosts" "$target" 'grep -q "/opt/c2/run.sh" /etc/inittab || echo "::respawn:/opt/c2/run.sh" >> /etc/inittab'
