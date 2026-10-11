@@ -220,6 +220,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2-gnss"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "gpio-cdev",
+ "libc",
+ "nix 0.31.3",
+ "thiserror",
+ "tokio",
+ "tokio-serial",
+ "tokio-util",
+]
+
+[[package]]
 name = "c2-lora"
 version = "0.1.0"
 dependencies = [
@@ -247,6 +262,7 @@ version = "0.1.0"
 dependencies = [
  "c2-codec",
  "c2-exchange",
+ "c2-gnss",
  "c2-lora",
  "c2-model",
  "mqp2p",
@@ -611,6 +627,19 @@ dependencies = [
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "gpio-cdev"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09831ec59b80be69e75d29cf36e16afbbe5fd1af9c1bf4689ad91c77db5aa6a6"
+dependencies = [
+ "bitflags 2.13.2",
+ "futures",
+ "libc",
+ "nix 0.27.1",
+ "tokio",
 ]
 
 [[package]]
@@ -1132,6 +1161,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.13.2",
  "cfg-if",
  "libc",
 ]

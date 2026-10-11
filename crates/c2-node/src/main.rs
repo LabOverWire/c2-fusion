@@ -12,6 +12,8 @@ use stitch_p2p::{peer_id_from_fingerprint, Store, Swarm};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
+#[cfg(target_os = "linux")]
+mod gnss;
 mod lora;
 
 const PULL: Duration = Duration::from_millis(200);
@@ -58,6 +60,30 @@ fn lora_settings() -> Result<Option<lora::LoraSettings>> {
             },
         },
     }))
+}
+
+#[cfg(target_os = "linux")]
+fn start_gnss(name: &str) -> Result<Option<tokio::task::JoinHandle<()>>> {
+    let Ok(port) = std::env::var("C2_GNSS_PORT") else {
+        return Ok(None);
+    };
+    let settings = gnss::GnssSettings {
+        port,
+        baud_rate: env_parse("C2_GNSS_BAUD", "115200")?,
+        pps_chip: env_or("C2_PPS_CHIP", "/dev/gpiochip0"),
+        pps_line: env_parse("C2_PPS_LINE", "20")?,
+    };
+    Ok(Some(tokio::spawn(gnss::run(settings, name.to_string()))))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_gnss(name: &str) -> Result<Option<tokio::task::JoinHandle<()>>> {
+    match std::env::var("C2_GNSS_PORT") {
+        Ok(port) => {
+            Err(format!("{name}: C2_GNSS_PORT={port} needs linux for pps and clock").into())
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 fn announce(outbox: &Option<mpsc::Sender<C2Message>>, name: &str, msg: &C2Message) {
@@ -170,12 +196,12 @@ async fn main() -> Result<()> {
         (Ok(user), Ok(pass)) => Some((user, pass)),
         _ => None,
     };
+    let mut tasks: Vec<tokio::task::JoinHandle<()>> = start_gnss(&name)?.into_iter().collect();
     let peer = connect_and_register(&name, &broker, bind, &credentials).await;
     let self_id = peer_id_from_fingerprint(peer.fingerprint())
         .ok_or_else(|| -> Box<dyn Error + Send + Sync> { "invalid peer fingerprint".into() })?;
     let store = Arc::new(Store::new(self_id));
 
-    let mut tasks = Vec::new();
     let outbox = match lora_settings()? {
         Some(settings) => {
             let (sender, receiver) = mpsc::channel(lora::OUTBOX_DEPTH);

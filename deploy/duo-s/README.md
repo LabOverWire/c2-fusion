@@ -17,6 +17,20 @@ Re-running the script upgrades the binary and restarts the node.
 
 A fourth argument gives the node a LoRa address and enables the RYLR890 bearer on UART2 (pins 11 and 13, reset on pin 15). `C2_LORA_NETWORK`, `C2_LORA_POWER_DBM` and `C2_LORA_SPREADING_FACTOR` override the radio defaults (6, 15, 9).
 
+## GNSS
+
+Setting `C2_GNSS=1` when running `install.sh` enables a GNSS receiver with PPS on UART1, at `C2_GNSS_BAUD` (default 115200, which suits the UM980; the GT-U7 needs 9600). Both receivers use the same header pins. Wiring for the UM980 carrier:
+
+| Duo S header | Receiver |
+|---|---|
+| pin 2 (VSYS 5V) | VCC |
+| pin 20 (GND) | GND |
+| pin 22 (UART1 RX) | TX2 |
+| pin 18 (UART1 TX) | RX2 |
+| pin 16 (GPIO 500) | PPS |
+
+The receiver's own USB-C stays unplugged while VCC is wired. At start the node asks the receiver for GGA and RMC once per second, so the receiver's saved configuration is left alone. The PPS rising edge is read from `/dev/gpiochip0` line 20 with its kernel interrupt timestamp and paired with the RMC that follows it. Each second the measured offset goes to the kernel clock discipline (`adjtimex` in PLL mode), which corrects both the time and the oscillator's frequency error, so the clock stays on GNSS time and keeps the learned frequency if the fix is lost. An offset of half a second or more, such as the 1970 clock at boot, is stepped instead. With GNSS enabled, `run.sh` does not wait for NTP before starting the node, and it replaces the ntpd daemon with a one-shot `ntpd -gq`, so the network can still set the clock when there is no fix without fighting the GNSS discipline afterwards. Every minute the node logs fix quality, satellite count, PPS edges, the latest and worst clock offset; it never logs coordinates.
+
 ## Wi-Fi
 
 `deploy/duo-s/wifi.sh <board-host> <ssid> < passphrase-file` joins a WPA2 network. The key is derived on the host (PBKDF2, as `wpa_passphrase` does), so the plaintext passphrase never reaches the board; `/etc/wpa_supplicant.conf` holds only the derived key and is root-only. Re-running replaces the network's key. `/etc/init.d/S99wifi` starts `wpa_supplicant` at boot once the AIC8800 driver has created `wlan0`, and `dhcpcd` takes the address.
@@ -25,7 +39,7 @@ A fourth argument gives the node a LoRa address and enables the RYLR890 bearer o
 
 - `/opt/c2/c2-node`: the node binary.
 - `/etc/default/c2-node`: one `KEY=value` setting per line, read (not executed) at start.
-- `/opt/c2/run.sh`: waits up to 120 seconds for NTP to set the clock (the board has no RTC and boots at 1970), then applies the `C2_PINMUX` pin routing and runs the node with its output sent to syslog.
+- `/opt/c2/run.sh`: unless GNSS is enabled, waits up to 120 seconds for NTP to set the clock (the board has no RTC and boots at 1970); with GNSS, swaps the ntpd daemon for a one-shot sync. It then applies the `C2_PINMUX` pin routing and runs the node with its output sent to syslog.
 - A `::respawn:/opt/c2/run.sh` line in `/etc/inittab`, so busybox init starts the node at boot and restarts it if it exits.
 - `/opt/c2/inbox`: drop NIEM JSON messages here and the node ingests them into the shared picture.
 

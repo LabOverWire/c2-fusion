@@ -35,6 +35,10 @@ ssh -o "$known_hosts" "$target" 'cat > /opt/c2/run.sh && chmod 755 /opt/c2/run.s
         printf 'C2_LORA_ADDRESS=%s\nC2_LORA_NETWORK=%s\nC2_LORA_POWER_DBM=%s\nC2_LORA_SPREADING_FACTOR=%s\n' \
             "$lora_address" "${C2_LORA_NETWORK:-6}" "${C2_LORA_POWER_DBM:-15}" "${C2_LORA_SPREADING_FACTOR:-9}"
     fi
+    if [ -n "${C2_GNSS:-}" ]; then
+        pinmux="${pinmux:+$pinmux,}A18/UART1_RX,A19/UART1_TX,A20/A20"
+        printf 'C2_GNSS_PORT=/dev/ttyS1\nC2_GNSS_BAUD=%s\nC2_PPS_CHIP=/dev/gpiochip0\nC2_PPS_LINE=20\n' "${C2_GNSS_BAUD:-115200}"
+    fi
     printf 'C2_PINMUX=%s\n' "$pinmux"
 } | ssh -o "$known_hosts" "$target" 'cat > /etc/default/c2-node && chmod 600 /etc/default/c2-node'
 ssh -o "$known_hosts" "$target" 'grep -q "/opt/c2/run.sh" /etc/inittab || echo "::respawn:/opt/c2/run.sh" >> /etc/inittab'
