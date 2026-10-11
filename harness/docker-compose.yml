@@ -12,6 +12,7 @@ services:
     depends_on: [mqdb]
     environment:
       C2_NAME: edge
+      C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: mqdb:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
@@ -20,7 +21,7 @@ services:
       C2_INGEST_FILE: /messages/edge.json
       C2_INBOX: /inbox
       C2_INBOX_FMT: c2-json
-      C2_PICTURE_INTERVAL_MS: "1000"
+      C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
     volumes:
       - ./messages:/messages:ro
       - ./run/inbox/edge:/inbox
@@ -33,13 +34,14 @@ services:
     depends_on: [mqdb]
     environment:
       C2_NAME: relay
+      C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: mqdb:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
       C2_INGEST_FMT: c2-json
       C2_INGEST_FILE: /messages/relay.json
-      C2_PICTURE_INTERVAL_MS: "1000"
+      C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
     volumes:
       - ./messages:/messages:ro
     networks: [c2net]
@@ -51,13 +53,14 @@ services:
     depends_on: [mqdb]
     environment:
       C2_NAME: hq
+      C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: mqdb:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
       C2_INGEST_FMT: c2-json
       C2_INGEST_FILE: /messages/hq.json
-      C2_PICTURE_INTERVAL_MS: "1000"
+      C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
     volumes:
       - ./messages:/messages:ro
     networks: [c2net]

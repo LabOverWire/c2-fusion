@@ -97,19 +97,24 @@ async fn broker_reachable(broker: &str) -> bool {
     )
 }
 
-async fn connect_and_register(
-    name: &str,
-    broker: &str,
-    bind: SocketAddr,
-    credentials: &Option<(String, String)>,
-) -> Peer {
+async fn connect_and_register(settings: &MeshSettings) -> Peer {
+    let MeshSettings {
+        name,
+        broker,
+        bind,
+        credentials,
+        segmentation_offload,
+    } = settings;
     let mut delay = RETRY;
     let mut peer = loop {
         if broker_reachable(broker).await {
-            let mut config = PeerConfig::new(name, broker)
+            let mut config = PeerConfig::new(name.as_str(), broker.as_str())
                 .without_stun()
-                .with_bind_addr(bind)
+                .with_bind_addr(*bind)
                 .with_lease_secs(LEASE_SECS);
+            if !segmentation_offload {
+                config = config.without_segmentation_offload();
+            }
             if let Some((user, pass)) = credentials {
                 config = config.with_credentials(user.clone(), pass.clone());
             }
@@ -149,14 +154,16 @@ fn node_identity(name: &str) -> PeerId {
     Sha256::digest(name.as_bytes()).into()
 }
 
-async fn join_mesh(
+struct MeshSettings {
     name: String,
     broker: String,
     bind: SocketAddr,
     credentials: Option<(String, String)>,
-    node: SyncNode,
-) -> Swarm {
-    let peer = connect_and_register(&name, &broker, bind, &credentials).await;
+    segmentation_offload: bool,
+}
+
+async fn join_mesh(settings: MeshSettings, node: SyncNode) -> Swarm {
+    let peer = connect_and_register(&settings).await;
     Swarm::spawn(Arc::new(peer), node, PULL)
 }
 
@@ -272,10 +279,13 @@ async fn main() -> Result<()> {
     }
 
     let mesh = tokio::spawn(join_mesh(
-        name.clone(),
-        broker,
-        bind,
-        credentials,
+        MeshSettings {
+            name: name.clone(),
+            broker,
+            bind,
+            credentials,
+            segmentation_offload: env_parse("C2_QUIC_SEGMENTATION_OFFLOAD", "true")?,
+        },
         store.node().clone(),
     ));
 

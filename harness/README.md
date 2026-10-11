@@ -54,12 +54,40 @@ The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem),
 
 - Partition and rejoin (denied/intermittent) use `docker network disconnect`/`connect`, no netem.
 - Bandwidth and delay (degraded/low-bandwidth) use `tc`/`netem` `rate` and `delay`; the runtime image installs `iproute2`, so `run.sh` applies a UHF profile the picture holds under.
-- Loss is deliberately not scripted: netem drops whole GSO super-buffers and clusters QUIC loss (the artifact behind the withdrawn MQTT-over-QUIC paper). Trust netem loss only with UDP segmentation offload disabled.
+- Loss uses `netem loss` in `loss.sh`. netem drops whole GSO super-buffers, which clusters QUIC loss (the artifact behind the withdrawn MQTT-over-QUIC paper), so the nodes run with UDP segmentation offload disabled (`C2_QUIC_SEGMENTATION_OFFLOAD=false`, which sets quinn's `enable_segmentation_offload(false)`). Each row reports the loss netem actually applied and the average bytes per packet it saw; an average at or below the 1500-byte MTU confirms netem dropped single datagrams.
+
+## Loss sweep
+
+`./loss.sh` applies random loss to the edge uplink at 0, 1, 5, 10 and 20 percent, three trials each. Each trial injects a new contact into edge and times it from edge's ingest log line to the first hq log line naming it, using Docker's log timestamps; after a 30-second window it reads netem's counters. The nodes publish their picture every 200 ms in this run. Loss is applied to edge's egress only, so packets toward edge, including QUIC acknowledgements, are not dropped.
+
+Last run (2026-10-11), `loss.sh`:
+
+```
+configured trial  measured     packets    avg_bytes_pkt  convergence_s
+0%         1      0.0%         1732       120            0.18
+0%         2      0.0%         1710       121            0.15
+0%         3      0.0%         1716       121            0.05
+1%         1      0.9%         1740       121            0.18
+1%         2      0.8%         1722       121            0.13
+1%         3      1.2%         1733       121            0.17
+5%         1      4.0%         1732       122            0.09
+5%         2      6.0%         1705       123            0.16
+5%         3      4.9%         1768       122            0.12
+10%        1      10.5%        1859       121            0.07
+10%        2      9.5%         1847       122            0.11
+10%        3      9.8%         1848       121            0.03
+20%        1      19.1%        1908       122            0.11
+20%        2      19.9%        1954       121            0.06
+20%        3      21.4%        2059       120            0.20
+```
+
+Every contact reached hq within 0.2 seconds up to 20 percent loss. The packets offered in each window grow with loss (about 1720 at 0 percent, about 1970 at 20 percent) as QUIC retransmits. Convergence is measured to the first hq log line, so it carries the timing of the 200 ms picture log.
 
 ## Run it
 
 ```
 ./run.sh
+./loss.sh
 ```
 
 Requires Docker. The script builds the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), brings the stack up, runs the demo, and tears everything down.
