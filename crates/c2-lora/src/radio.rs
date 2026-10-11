@@ -43,6 +43,8 @@ pub enum LoraError {
     NoResetLine,
     #[error("serial port closed")]
     Closed,
+    #[error("bandwidth {0:?} kHz is not one of 125, 250, 500")]
+    Bandwidth(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,19 @@ impl Bandwidth {
             Bandwidth::Khz125 => 7,
             Bandwidth::Khz250 => 8,
             Bandwidth::Khz500 => 9,
+        }
+    }
+}
+
+impl std::str::FromStr for Bandwidth {
+    type Err = LoraError;
+
+    fn from_str(khz: &str) -> Result<Self, Self::Err> {
+        match khz {
+            "125" => Ok(Bandwidth::Khz125),
+            "250" => Ok(Bandwidth::Khz250),
+            "500" => Ok(Bandwidth::Khz500),
+            other => Err(LoraError::Bandwidth(other.to_string())),
         }
     }
 }
@@ -363,6 +378,14 @@ impl<P: AsyncRead + AsyncWrite + Unpin> Radio<P> {
 mod tests {
     use super::*;
     use tokio::io::{duplex, AsyncReadExt, DuplexStream};
+
+    #[test]
+    fn bandwidth_parses_from_khz() {
+        assert_eq!("125".parse::<Bandwidth>().ok(), Some(Bandwidth::Khz125));
+        assert_eq!("250".parse::<Bandwidth>().ok(), Some(Bandwidth::Khz250));
+        assert_eq!("500".parse::<Bandwidth>().ok(), Some(Bandwidth::Khz500));
+        assert!("62.5".parse::<Bandwidth>().is_err());
+    }
 
     async fn expect_request(device: &mut DuplexStream, expected: &[u8]) {
         let mut request = vec![0; expected.len()];

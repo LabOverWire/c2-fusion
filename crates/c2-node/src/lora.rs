@@ -88,9 +88,10 @@ async fn session(
     let ready = radio.reset().await?;
     let changed = radio.configure(&settings.config).await?;
     println!(
-        "LORA name={name} ready address={} spreading_factor={} reset_ms={} changed={changed}",
+        "LORA name={name} ready address={} spreading_factor={} bandwidth={:?} reset_ms={} changed={changed}",
         settings.config.address,
         settings.config.modulation.spreading_factor,
+        settings.config.modulation.bandwidth,
         ready.as_millis()
     );
 

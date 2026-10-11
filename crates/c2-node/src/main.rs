@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use c2_codec::Registry;
 use c2_exchange::{ingest_wire_with, picture};
-use c2_lora::{Bandwidth, Config, Modulation};
+use c2_lora::{Config, Modulation};
 use c2_model::C2Message;
 use mqp2p::{Peer, PeerConfig};
 use sha2::{Digest, Sha256};
@@ -58,7 +58,7 @@ fn lora_settings() -> Result<Option<lora::LoraSettings>> {
             power_dbm: env_parse("C2_LORA_POWER_DBM", "15")?,
             modulation: Modulation {
                 spreading_factor: env_parse("C2_LORA_SPREADING_FACTOR", "9")?,
-                bandwidth: Bandwidth::Khz125,
+                bandwidth: env_parse("C2_LORA_BANDWIDTH_KHZ", "125")?,
                 coding_rate: 1,
                 preamble: 4,
             },

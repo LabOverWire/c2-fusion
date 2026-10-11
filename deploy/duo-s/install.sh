@@ -32,8 +32,8 @@ ssh -o "$known_hosts" "$target" 'cat > /opt/c2/run.sh && chmod 755 /opt/c2/run.s
     if [ -n "$lora_address" ]; then
         pinmux="B11/UART2_TX,B12/UART2_RX"
         printf 'C2_LORA_PORT=/dev/ttyS2\nC2_LORA_RESET_GPIO=470\n'
-        printf 'C2_LORA_ADDRESS=%s\nC2_LORA_NETWORK=%s\nC2_LORA_POWER_DBM=%s\nC2_LORA_SPREADING_FACTOR=%s\n' \
-            "$lora_address" "${C2_LORA_NETWORK:-6}" "${C2_LORA_POWER_DBM:-15}" "${C2_LORA_SPREADING_FACTOR:-9}"
+        printf 'C2_LORA_ADDRESS=%s\nC2_LORA_NETWORK=%s\nC2_LORA_POWER_DBM=%s\nC2_LORA_SPREADING_FACTOR=%s\nC2_LORA_BANDWIDTH_KHZ=%s\n' \
+            "$lora_address" "${C2_LORA_NETWORK:-6}" "${C2_LORA_POWER_DBM:-15}" "${C2_LORA_SPREADING_FACTOR:-9}" "${C2_LORA_BANDWIDTH_KHZ:-125}"
     fi
     if [ -n "${C2_GNSS:-}" ]; then
         pinmux="${pinmux:+$pinmux,}A18/UART1_RX,A19/UART1_TX,A20/A20"
