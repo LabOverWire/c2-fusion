@@ -18,8 +18,9 @@ epoch_of() {
 }
 
 first_timestamp() {
-    local container="$1" pattern="$2"
-    docker logs --timestamps "$container" 2>&1 | grep -m1 -- "$pattern" | cut -d' ' -f1
+    local container="$1" pattern="$2" logs
+    logs="$(docker logs --timestamps "$container" 2>&1)"
+    grep -m1 -- "$pattern" <<< "$logs" | cut -d' ' -f1
 }
 
 inject() {
@@ -54,7 +55,7 @@ for rate in $RATES; do
         window_end=$(( $(date +%s) + WINDOW ))
         inject "$id"
         deadline=$(( $(date +%s) + TIMEOUT ))
-        until docker logs --tail 5 c2-hq 2>&1 | grep -q -- "$id"; do
+        until grep -q -- "$id" <<< "$(docker logs --tail 5 c2-hq 2>&1)"; do
             if [ "$(date +%s)" -ge "$deadline" ]; then
                 echo "FAIL: $id did not reach hq within ${TIMEOUT}s at ${rate}% loss"
                 exit 1

@@ -14,7 +14,7 @@ wait_for_count() {
     local container="$1" want="$2" timeout="$3" deadline
     deadline=$(( $(date +%s) + timeout ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-        if docker logs --tail 3 "$container" 2>/dev/null | grep -q "count=$want"; then
+        if grep -q "count=$want" <<< "$(docker logs --tail 3 "$container" 2>/dev/null)"; then
             return 0
         fi
         sleep 1

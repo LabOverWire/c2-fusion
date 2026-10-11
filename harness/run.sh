@@ -19,7 +19,7 @@ sleep 3
 log "inject a new contact (C-2) into edge during the outage"
 cp "$HARNESS_DIR/messages/inject.json" "$HARNESS_DIR/run/inbox/edge/inject.json"
 wait_for_count c2-edge 4 30 && echo "edge ingested C-2 locally (count=4) while isolated"
-if docker logs --tail 3 c2-hq | grep -q "count=4"; then
+if grep -q "count=4" <<< "$(docker logs --tail 3 c2-hq)"; then
     echo "UNEXPECTED: hq already has C-2 during partition"; else
     echo "confirmed: hq still count=3, C-2 not yet propagated"
 fi

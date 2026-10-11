@@ -18,7 +18,6 @@ use tokio::time::{sleep, timeout};
 mod gnss;
 mod lora;
 
-const PULL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(1);
 const BROKER_RETRY_MAX: Duration = Duration::from_secs(60);
 const BROKER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -104,6 +103,7 @@ async fn connect_and_register(settings: &MeshSettings) -> Peer {
         bind,
         credentials,
         segmentation_offload,
+        ..
     } = settings;
     let mut delay = RETRY;
     let mut peer = loop {
@@ -160,11 +160,12 @@ struct MeshSettings {
     bind: SocketAddr,
     credentials: Option<(String, String)>,
     segmentation_offload: bool,
+    pull: Duration,
 }
 
 async fn join_mesh(settings: MeshSettings, node: SyncNode) -> Swarm {
     let peer = connect_and_register(&settings).await;
-    Swarm::spawn(Arc::new(peer), node, PULL)
+    Swarm::spawn(Arc::new(peer), node, settings.pull)
 }
 
 async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
@@ -285,6 +286,7 @@ async fn main() -> Result<()> {
             bind,
             credentials,
             segmentation_offload: env_parse("C2_QUIC_SEGMENTATION_OFFLOAD", "true")?,
+            pull: Duration::from_millis(env_parse("C2_PULL_MS", "200")?),
         },
         store.node().clone(),
     ));
