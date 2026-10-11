@@ -1,0 +1,41 @@
+#!/bin/sh
+PIDFILE=/var/run/wpa_supplicant.wlan0.pid
+
+launch() {
+    start-stop-daemon -S -q -p "$PIDFILE" -x /usr/sbin/wpa_supplicant -- \
+        -B -i wlan0 -c /etc/wpa_supplicant.conf -P "$PIDFILE"
+}
+
+start() {
+    if [ -d /sys/class/net/wlan0 ]; then
+        launch
+        return
+    fi
+    (
+        waited=0
+        while [ ! -d /sys/class/net/wlan0 ] && [ "$waited" -lt 60 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        launch
+    ) &
+}
+
+stop() {
+    start-stop-daemon -K -q -p "$PIDFILE"
+    rm -f "$PIDFILE"
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart)
+        stop
+        sleep 1
+        start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac

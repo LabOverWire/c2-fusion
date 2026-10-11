@@ -14,4 +14,9 @@ c2-codec = { path = "../c2-codec" }
 c2-exchange = { path = "../c2-exchange" }
 stitch-p2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "stitch-p2p", default-features = false, features = ["store", "discovery"] }
 mqp2p = { git = "https://github.com/LabOverWire/stitch-rs", package = "mqp2p" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "signal", "sync"] }
+c2-lora = { version = "0.1.0", path = "../c2-lora" }
+c2-model = { version = "0.1.0", path = "../c2-model" }
+tokio-serial = "5.5.0"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
+tracing = "0.1.44"

@@ -5,9 +5,14 @@ use std::time::Duration;
 
 use c2_codec::Registry;
 use c2_exchange::{ingest_wire_with, picture};
+use c2_lora::{Bandwidth, Config, Modulation};
+use c2_model::C2Message;
 use mqp2p::{Peer, PeerConfig};
 use stitch_p2p::{peer_id_from_fingerprint, Store, Swarm};
+use tokio::sync::mpsc;
 use tokio::time::sleep;
+
+mod lora;
 
 const PULL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(1);
@@ -23,8 +28,46 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-/// Connect to the MQDB signaling broker and register this peer, retrying until
-/// the broker is reachable (it may start after the node).
+fn env_parse<T>(key: &str, default: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: Error + Send + Sync + 'static,
+{
+    env_or(key, default)
+        .parse()
+        .map_err(|error| format!("invalid {key}: {error}").into())
+}
+
+fn lora_settings() -> Result<Option<lora::LoraSettings>> {
+    let Ok(port) = std::env::var("C2_LORA_PORT") else {
+        return Ok(None);
+    };
+    Ok(Some(lora::LoraSettings {
+        port,
+        reset_gpio: env_parse("C2_LORA_RESET_GPIO", "470")?,
+        config: Config {
+            address: env_req("C2_LORA_ADDRESS")?.parse()?,
+            network: env_parse("C2_LORA_NETWORK", "6")?,
+            band_hz: env_parse("C2_LORA_BAND_HZ", "915000000")?,
+            power_dbm: env_parse("C2_LORA_POWER_DBM", "15")?,
+            modulation: Modulation {
+                spreading_factor: env_parse("C2_LORA_SPREADING_FACTOR", "9")?,
+                bandwidth: Bandwidth::Khz125,
+                coding_rate: 1,
+                preamble: 4,
+            },
+        },
+    }))
+}
+
+fn announce(outbox: &Option<mpsc::Sender<C2Message>>, name: &str, msg: &C2Message) {
+    if let Some(sender) = outbox {
+        if let Err(error) = sender.try_send(msg.clone()) {
+            eprintln!("LORA name={name} skip id={} outbox={error}", msg.id());
+        }
+    }
+}
+
 async fn connect_and_register(
     name: &str,
     broker: &str,
@@ -53,23 +96,40 @@ async fn connect_and_register(
     }
 }
 
-async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
+async fn run_inbox(
+    store: Arc<Store>,
+    name: String,
+    dir: String,
+    fmt: String,
+    outbox: Option<mpsc::Sender<C2Message>>,
+) {
     let registry = Registry::with_defaults();
     loop {
-        if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
-            while let Ok(Some(entry)) = rd.next_entry().await {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                    continue;
-                }
-                if let Ok(bytes) = tokio::fs::read(&path).await {
-                    match ingest_wire_with(&store, &registry, &fmt, &bytes).await {
-                        Ok(msg) => println!("INBOX name={name} ingested id={}", msg.id()),
-                        Err(e) => eprintln!("INBOX name={name} error={e}"),
+        match tokio::fs::read_dir(&dir).await {
+            Ok(mut rd) => {
+                while let Ok(Some(entry)) = rd.next_entry().await {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    match tokio::fs::read(&path).await {
+                        Ok(bytes) => {
+                            match ingest_wire_with(&store, &registry, &fmt, &bytes).await {
+                                Ok(msg) => {
+                                    println!("INBOX name={name} ingested id={}", msg.id());
+                                    announce(&outbox, &name, &msg);
+                                }
+                                Err(e) => eprintln!("INBOX name={name} error={e}"),
+                            }
+                        }
+                        Err(e) => eprintln!("INBOX name={name} read-error={e}"),
+                    }
+                    if let Err(e) = tokio::fs::rename(&path, path.with_extension("done")).await {
+                        eprintln!("INBOX name={name} rename-error={e}");
                     }
                 }
-                let _ = tokio::fs::rename(&path, path.with_extension("done")).await;
             }
+            Err(e) => eprintln!("INBOX name={name} dir={dir} error={e}"),
         }
         sleep(RETRY).await;
     }
@@ -92,6 +152,12 @@ async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .without_time()
+        .with_max_level(env_parse::<tracing::Level>("C2_LOG", "warn")?)
+        .init();
     let name = env_req("C2_NAME")?;
     let broker = env_req("C2_BROKER")?;
     let bind: SocketAddr = env_or("C2_LISTEN", "0.0.0.0:9000").parse()?;
@@ -109,18 +175,31 @@ async fn main() -> Result<()> {
         .ok_or_else(|| -> Box<dyn Error + Send + Sync> { "invalid peer fingerprint".into() })?;
     let store = Arc::new(Store::new(self_id));
 
+    let mut tasks = Vec::new();
+    let outbox = match lora_settings()? {
+        Some(settings) => {
+            let (sender, receiver) = mpsc::channel(lora::OUTBOX_DEPTH);
+            tasks.push(tokio::spawn(lora::run(
+                settings,
+                Arc::clone(&store),
+                name.clone(),
+                receiver,
+            )));
+            Some(sender)
+        }
+        None => None,
+    };
+
     if let (Ok(fmt), Ok(file)) = (env_req("C2_INGEST_FMT"), env_req("C2_INGEST_FILE")) {
         let bytes = tokio::fs::read(&file).await?;
         let registry = Registry::with_defaults();
         let msg = ingest_wire_with(&store, &registry, &fmt, &bytes).await?;
         println!("INGEST name={name} id={} fmt={fmt}", msg.id());
+        announce(&outbox, &name, &msg);
     }
 
-    // Discovery and sync: the Swarm discovers peers through MQDB and bridges each
-    // connection into the sync session. Held until shutdown; Drop tears it down.
-    let _swarm = Swarm::spawn(Arc::new(peer), store.node().clone(), PULL);
+    let swarm = Swarm::spawn(Arc::new(peer), store.node().clone(), PULL);
 
-    let mut tasks = Vec::new();
     if let Ok(inbox) = env_req("C2_INBOX") {
         let fmt = env_or("C2_INBOX_FMT", "niem-json");
         tasks.push(tokio::spawn(run_inbox(
@@ -128,6 +207,7 @@ async fn main() -> Result<()> {
             name.clone(),
             inbox,
             fmt,
+            outbox.clone(),
         )));
     }
     tasks.push(tokio::spawn(run_printer(
@@ -140,5 +220,6 @@ async fn main() -> Result<()> {
     for t in tasks {
         t.abort();
     }
+    drop(swarm);
     Ok(())
 }
