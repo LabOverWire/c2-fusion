@@ -19,6 +19,15 @@ pub enum CodecError {
     Unsupported(String),
 }
 
+fn refuse_label(msg: &C2Message, wire_format: &str) -> Result<(), CodecError> {
+    match msg.label() {
+        None => Ok(()),
+        Some(_) => Err(CodecError::Encode(format!(
+            "{wire_format} has no representation for a confidentiality label"
+        ))),
+    }
+}
+
 pub trait Codec: Send + Sync {
     fn wire_format(&self) -> &'static str;
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError>;
@@ -66,6 +75,26 @@ impl Default for Registry {
 }
 
 #[cfg(test)]
+pub(crate) fn sample_label() -> c2_model::ConfidentialityLabel {
+    use c2_model::{Category, CategoryKind, ConfidentialityLabel, Policy};
+    ConfidentialityLabel {
+        policy: Policy {
+            name: "CWIX25".to_string(),
+            uri: "urn:oid:1.3.6.1.4.1.31778.102.25".to_string(),
+        },
+        classification: "UNCLASSIFIED".to_string(),
+        categories: vec![Category {
+            kind: CategoryKind::Permissive,
+            tag: "Releasable To".to_string(),
+            uri: "urn:oid:1.3.6.1.4.1.31778.103.15".to_string(),
+            values: vec!["CAN".to_string(), "AUS".to_string()],
+        }],
+        created_at: Some("2026-10-11T12:00:00Z".to_string()),
+        review_at: None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use c2_model::{ContactReport, Domain, FunctionalService};
@@ -80,6 +109,7 @@ mod tests {
             latitude: 49.2827,
             longitude: -123.1207,
             description: "Vehicle <light> & stationary".to_string(),
+            label: None,
         })
     }
 
@@ -110,6 +140,28 @@ mod tests {
             let bytes = codec.encode(&msg).unwrap();
             let back = codec.decode(&bytes).unwrap();
             assert_eq!(msg, back, "round trip failed for {wire}");
+        }
+    }
+
+    #[test]
+    fn labelled_message_round_trips_or_is_refused() {
+        let reg = Registry::with_defaults();
+        let C2Message::ContactReport(mut report) = sample() else {
+            return;
+        };
+        report.label = Some(sample_label());
+        let msg = C2Message::ContactReport(report);
+        for wire in reg.wire_formats() {
+            let codec = reg.get(wire).unwrap();
+            match (wire, codec.encode(&msg)) {
+                ("c2-json" | "compact-bin", Ok(bytes)) => {
+                    assert_eq!(codec.decode(&bytes).unwrap(), msg, "{wire}")
+                }
+                (_, Err(CodecError::Encode(reason))) => {
+                    assert!(reason.contains("confidentiality label"), "{wire}: {reason}")
+                }
+                (_, outcome) => panic!("{wire} gave {outcome:?}"),
+            }
         }
     }
 

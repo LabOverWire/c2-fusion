@@ -396,7 +396,10 @@ fn op_from(code: u8) -> Result<Op, RadioError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use c2_model::{ContactReport, Domain, FunctionalService, PositionReport};
+    use c2_model::{
+        Category, CategoryKind, ConfidentialityLabel, ContactReport, Domain, FunctionalService,
+        Policy, PositionReport,
+    };
 
     fn peer(n: u8) -> PeerId {
         [n; 32]
@@ -411,6 +414,7 @@ mod tests {
             reported_at: "2026-10-11T00:45:00Z".to_string(),
             latitude: 45.5017,
             longitude: -73.5673,
+            label: None,
         })
     }
 
@@ -450,6 +454,41 @@ mod tests {
     }
 
     #[test]
+    fn labelled_write_travels_compact_and_rebuilds_identical_bytes() {
+        let C2Message::PositionReport(report) = position() else {
+            return;
+        };
+        let msg = C2Message::PositionReport(PositionReport {
+            label: Some(ConfidentialityLabel {
+                policy: Policy {
+                    name: "CWIX25".to_string(),
+                    uri: "urn:oid:1.3.6.1.4.1.31778.102.25".to_string(),
+                },
+                classification: "UNCLASSIFIED".to_string(),
+                categories: vec![Category {
+                    kind: CategoryKind::Permissive,
+                    tag: "Releasable To".to_string(),
+                    uri: "urn:oid:1.3.6.1.4.1.31778.103.15".to_string(),
+                    values: vec!["CAN".to_string(), "AUS".to_string()],
+                }],
+                created_at: Some("2026-10-11T12:00:00Z".to_string()),
+                review_at: None,
+            }),
+            ..report
+        });
+        let original = frame(ENTITY, stored(&msg));
+        let bytes = RadioMessage::Write(original.clone())
+            .encode()
+            .expect("encode");
+        assert_eq!(bytes.len(), 129 + 133);
+        assert!(bytes.len() < original.data.len());
+        assert_eq!(
+            RadioMessage::decode(&bytes).expect("decode"),
+            RadioMessage::Write(original)
+        );
+    }
+
+    #[test]
     fn gnss_derived_coordinates_always_travel_compact() {
         for step in 0..2000u32 {
             let minutes = f64::from(step) * 0.000_137;
@@ -461,6 +500,7 @@ mod tests {
                 reported_at: "2026-10-11T00:45:00Z".to_string(),
                 latitude: 45.0 + (30.0 + minutes) / 60.0,
                 longitude: -(73.0 + (34.0 + minutes) / 60.0),
+                label: None,
             });
             let bytes = RadioMessage::Write(frame(ENTITY, stored(&msg)))
                 .encode()
@@ -503,6 +543,7 @@ mod tests {
             latitude: 45.5017,
             longitude: -73.5673,
             description: "Convoy of six vehicles moving north along the river road. ".repeat(4),
+            label: None,
         })
     }
 

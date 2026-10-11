@@ -127,6 +127,7 @@ async fn share_position(name: &str, store: &Store, fix: Position, satellites: u8
         reported_at: humantime::format_rfc3339_seconds(SystemTime::now()).to_string(),
         latitude: fix.latitude,
         longitude: fix.longitude,
+        label: None,
     });
     match ingest(store, &msg).await {
         Ok(()) => println!(

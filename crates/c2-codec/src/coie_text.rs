@@ -1,7 +1,7 @@
 use c2_model::{C2Message, ContactReport, Domain, FunctionalService, PositionReport, Rfi, Sitrep};
 
 use crate::codes::{domain_code, domain_from, service_code, service_from};
-use crate::{Codec, CodecError};
+use crate::{refuse_label, Codec, CodecError};
 
 const SET_END: &str = "//";
 const FIELD: char = '/';
@@ -29,6 +29,7 @@ impl Codec for CoieTextCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        refuse_label(msg, self.wire_format())?;
         let lines = match msg {
             C2Message::ContactReport(m) => vec![
                 msgid(CONTACT_REPORT, &m.reporting_unit, &m.id, &m.observed_at)?,
@@ -126,6 +127,7 @@ impl Codec for CoieTextCodec {
                     latitude,
                     longitude,
                     description: single(rest, "AMPN")?,
+                    label: None,
                 }))
             }
             SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
@@ -138,6 +140,7 @@ impl Codec for CoieTextCodec {
                 personnel_effective: single(rest, "PERS")?
                     .parse()
                     .map_err(|e| CodecError::Decode(format!("PERS: {e}")))?,
+                label: None,
             })),
             INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
                 id: serial.clone(),
@@ -146,6 +149,7 @@ impl Codec for CoieTextCodec {
                 service,
                 requested_at: time,
                 question: single(rest, "NARR")?,
+                label: None,
             })),
             _ => {
                 let (latitude, longitude) = coordinates(rest)?;
@@ -157,6 +161,7 @@ impl Codec for CoieTextCodec {
                     reported_at: time,
                     latitude,
                     longitude,
+                    label: None,
                 }))
             }
         }
@@ -306,6 +311,7 @@ mod tests {
             latitude: 45.5017,
             longitude: -73.5673,
             description: "Vehicle stationary, N/S road".to_string(),
+            label: None,
         })
     }
 
@@ -320,6 +326,7 @@ mod tests {
                 reported_at: "2026-09-29T15:00:00Z".to_string(),
                 summary: "Holding position".to_string(),
                 personnel_effective: 118,
+                label: None,
             }),
             C2Message::Rfi(Rfi {
                 id: "RFI-42".to_string(),
@@ -328,6 +335,7 @@ mod tests {
                 service: FunctionalService::Logistics,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: String::new(),
+                label: None,
             }),
             C2Message::PositionReport(PositionReport {
                 id: "POS-node-a".to_string(),
@@ -337,6 +345,7 @@ mod tests {
                 reported_at: "2026-10-11T00:45:00Z".to_string(),
                 latitude: -33.8688,
                 longitude: 151.2093,
+                label: None,
             }),
         ]
     }
@@ -382,6 +391,7 @@ mod tests {
                 service: FunctionalService::Intelligence,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Bridge status?".to_string(),
+                label: None,
             })
         );
     }

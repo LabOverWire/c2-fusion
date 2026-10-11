@@ -22,6 +22,7 @@ AMPN/Vehicle stationary, N/S road//
 - In ordinary sets a field cannot contain `/` or a line break.
 - `AMPN` and `NARR` are free-text sets: their single field runs to the closing `//`, so it may contain single `/` characters but not `//`, cannot end with `/`, and cannot contain a line break.
 - The message must contain exactly the sets listed for its identifier, in that order, and nothing else.
+- A message carrying a confidentiality label is refused: the format has no set for it yet.
 
 ## Messages
 

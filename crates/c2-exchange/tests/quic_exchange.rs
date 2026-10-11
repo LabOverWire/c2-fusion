@@ -32,6 +32,7 @@ fn contact(id: &str) -> C2Message {
         latitude: 49.2827,
         longitude: -123.1207,
         description: "Vehicle stationary".to_string(),
+        label: None,
     })
 }
 
@@ -44,6 +45,7 @@ fn sitrep(id: &str) -> C2Message {
         reported_at: "2026-09-29T15:00:00Z".to_string(),
         summary: "Holding position".to_string(),
         personnel_effective: 118,
+        label: None,
     })
 }
 

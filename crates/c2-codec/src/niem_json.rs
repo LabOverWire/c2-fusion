@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::codes::{domain_code, domain_from, service_code, service_from};
 use crate::niem::{check, C2F, MO, NC, USMTF};
-use crate::{Codec, CodecError};
+use crate::{refuse_label, Codec, CodecError};
 
 const CONTEXT: &str = "@context";
 const CONTACT_REPORT: &str = "c2f:ContactReportMessage";
@@ -33,6 +33,7 @@ impl Codec for NiemJsonCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        refuse_label(msg, self.wire_format())?;
         check(msg)?;
         let (root, body) = match msg {
             C2Message::ContactReport(m) => (
@@ -126,6 +127,7 @@ impl Codec for NiemJsonCodec {
                 latitude: degrees(&body, &observed(LATITUDE))?,
                 longitude: degrees(&body, &observed(LONGITUDE))?,
                 description: string(&body, &["nc:DocumentDescriptionText", TEXT])?,
+                label: None,
             })),
             SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
                 id: string(&body, DOCUMENT_ID)?,
@@ -140,6 +142,7 @@ impl Codec for NiemJsonCodec {
                     .ok_or_else(|| {
                         CodecError::Decode("personnel quantity is not a count".to_string())
                     })?,
+                label: None,
             })),
             INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
                 id: string(&body, &["nc:RequestIdentification", "nc:IdentificationID"])?,
@@ -151,6 +154,7 @@ impl Codec for NiemJsonCodec {
                 service: service_from(&string(&body, &[SERVICE_CODE])?)?,
                 requested_at: string(&body, &["nc:RequestDate", "nc:DateTime"])?,
                 question: string(&body, &["nc:RequestText", TEXT])?,
+                label: None,
             })),
             POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
                 id: string(&body, DOCUMENT_ID)?,
@@ -160,6 +164,7 @@ impl Codec for NiemJsonCodec {
                 reported_at: string(&body, CREATED_AT)?,
                 latitude: degrees(&body, &unit(LATITUDE))?,
                 longitude: degrees(&body, &unit(LONGITUDE))?,
+                label: None,
             })),
             other => Err(CodecError::Decode(format!(
                 "unknown NIEM message property {other}"
@@ -307,6 +312,7 @@ mod tests {
                 latitude: 45.5017,
                 longitude: -73.5673,
                 description: "Vehicle stationary".to_string(),
+                label: None,
             }),
             C2Message::Sitrep(Sitrep {
                 id: "S-1".to_string(),
@@ -316,6 +322,7 @@ mod tests {
                 reported_at: "2026-09-29T15:00:00Z".to_string(),
                 summary: "Holding position".to_string(),
                 personnel_effective: 118,
+                label: None,
             }),
             C2Message::Rfi(Rfi {
                 id: "RFI-42".to_string(),
@@ -324,6 +331,7 @@ mod tests {
                 service: FunctionalService::Logistics,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Fuel state?".to_string(),
+                label: None,
             }),
             C2Message::PositionReport(PositionReport {
                 id: "POS-node-a".to_string(),
@@ -333,6 +341,7 @@ mod tests {
                 reported_at: "2026-10-11T00:45:00Z".to_string(),
                 latitude: 45.5017,
                 longitude: -73.5673,
+                label: None,
             }),
         ]
     }
@@ -417,6 +426,7 @@ mod tests {
                 service: FunctionalService::Intelligence,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Bridge intact?".to_string(),
+                label: None,
             })
         );
     }

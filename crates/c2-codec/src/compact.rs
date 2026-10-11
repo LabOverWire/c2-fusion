@@ -1,7 +1,10 @@
 use bebytes::BeBytes;
 
 use crate::{Codec, CodecError};
-use c2_model::{C2Message, ContactReport, Domain, FunctionalService, PositionReport, Rfi, Sitrep};
+use c2_model::{
+    C2Message, Category, CategoryKind, ConfidentialityLabel, ContactReport, Domain,
+    FunctionalService, Policy, PositionReport, Rfi, Sitrep,
+};
 
 const VERSION: u8 = 2;
 
@@ -16,7 +19,9 @@ pub struct CompactCodec;
 struct Prefix {
     #[bits(4)]
     version: u8,
-    #[bits(4)]
+    #[bits(1)]
+    labelled: u8,
+    #[bits(3)]
     kind: u8,
     #[bits(4)]
     domain: u8,
@@ -88,6 +93,45 @@ struct PositionWire {
     reported_at: String,
     latitude: f64,
     longitude: f64,
+}
+
+#[derive(BeBytes, Debug, Clone, PartialEq)]
+struct LabelWire {
+    policy_name_len: u8,
+    #[FromField(policy_name_len)]
+    policy_name: String,
+    policy_uri_len: u8,
+    #[FromField(policy_uri_len)]
+    policy_uri: String,
+    classification_len: u8,
+    #[FromField(classification_len)]
+    classification: String,
+    created_len: u8,
+    #[FromField(created_len)]
+    created_at: String,
+    review_len: u8,
+    #[FromField(review_len)]
+    review_at: String,
+    category_count: u8,
+}
+
+#[derive(BeBytes, Debug, Clone, PartialEq)]
+struct CategoryWire {
+    kind: u8,
+    tag_len: u8,
+    #[FromField(tag_len)]
+    tag: String,
+    uri_len: u8,
+    #[FromField(uri_len)]
+    uri: String,
+    value_count: u8,
+}
+
+#[derive(BeBytes, Debug, Clone, PartialEq)]
+struct ValueWire {
+    value_len: u8,
+    #[FromField(value_len)]
+    value: String,
 }
 
 impl Codec for CompactCodec {
@@ -165,14 +209,17 @@ impl Codec for CompactCodec {
                 .to_be_bytes(),
             ),
         };
+        let label = msg.label().map(encode_label).transpose()?;
         let prefix = Prefix {
             version: VERSION,
+            labelled: u8::from(label.is_some()),
             kind,
             domain: domain_code(domain),
             service: service_code(service),
         };
         let mut bytes = prefix.to_be_bytes();
         bytes.extend_from_slice(&body);
+        bytes.extend(label.unwrap_or_default());
         Ok(bytes)
     }
 
@@ -189,7 +236,7 @@ impl Codec for CompactCodec {
         let body = &bytes[consumed..];
         match prefix.kind {
             CONTACT_REPORT => {
-                let wire: ContactWire = whole(body)?;
+                let (wire, label): (ContactWire, _) = with_label(body, prefix.labelled)?;
                 Ok(C2Message::ContactReport(ContactReport {
                     id: wire.id,
                     reporting_unit: wire.reporting_unit,
@@ -199,10 +246,11 @@ impl Codec for CompactCodec {
                     latitude: wire.latitude,
                     longitude: wire.longitude,
                     description: wire.description,
+                    label,
                 }))
             }
             SITREP => {
-                let wire: SitrepWire = whole(body)?;
+                let (wire, label): (SitrepWire, _) = with_label(body, prefix.labelled)?;
                 Ok(C2Message::Sitrep(Sitrep {
                     id: wire.id,
                     reporting_unit: wire.reporting_unit,
@@ -211,10 +259,11 @@ impl Codec for CompactCodec {
                     reported_at: wire.reported_at,
                     summary: wire.summary,
                     personnel_effective: wire.personnel_effective,
+                    label,
                 }))
             }
             RFI => {
-                let wire: RfiWire = whole(body)?;
+                let (wire, label): (RfiWire, _) = with_label(body, prefix.labelled)?;
                 Ok(C2Message::Rfi(Rfi {
                     id: wire.id,
                     requesting_unit: wire.requesting_unit,
@@ -222,10 +271,11 @@ impl Codec for CompactCodec {
                     service,
                     requested_at: wire.requested_at,
                     question: wire.question,
+                    label,
                 }))
             }
             POSITION_REPORT => {
-                let wire: PositionWire = whole(body)?;
+                let (wire, label): (PositionWire, _) = with_label(body, prefix.labelled)?;
                 Ok(C2Message::PositionReport(PositionReport {
                     id: wire.id,
                     reporting_unit: wire.reporting_unit,
@@ -234,6 +284,7 @@ impl Codec for CompactCodec {
                     reported_at: wire.reported_at,
                     latitude: wire.latitude,
                     longitude: wire.longitude,
+                    label,
                 }))
             }
             other => Err(CodecError::Decode(format!("unknown message kind {other}"))),
@@ -241,11 +292,131 @@ impl Codec for CompactCodec {
     }
 }
 
-fn whole<T: BeBytes>(body: &[u8]) -> Result<T, CodecError> {
+fn with_label<T: BeBytes>(
+    body: &[u8],
+    labelled: u8,
+) -> Result<(T, Option<ConfidentialityLabel>), CodecError> {
     let (wire, consumed) = T::try_from_be_bytes(body).map_err(malformed)?;
-    match body.len() - consumed {
-        0 => Ok(wire),
+    let rest = &body[consumed..];
+    let (label, rest) = match labelled {
+        0 => (None, rest),
+        _ => {
+            let (label, rest) = decode_label(rest)?;
+            (Some(label), rest)
+        }
+    };
+    match rest.len() {
+        0 => Ok((wire, label)),
         extra => Err(CodecError::Decode(format!("{extra} trailing bytes"))),
+    }
+}
+
+fn encode_label(label: &ConfidentialityLabel) -> Result<Vec<u8>, CodecError> {
+    let mut bytes = LabelWire {
+        policy_name_len: text_len(&label.policy.name)?,
+        policy_name: label.policy.name.clone(),
+        policy_uri_len: text_len(&label.policy.uri)?,
+        policy_uri: label.policy.uri.clone(),
+        classification_len: text_len(&label.classification)?,
+        classification: label.classification.clone(),
+        created_len: optional_len(&label.created_at)?,
+        created_at: label.created_at.clone().unwrap_or_default(),
+        review_len: optional_len(&label.review_at)?,
+        review_at: label.review_at.clone().unwrap_or_default(),
+        category_count: count(label.categories.len())?,
+    }
+    .to_be_bytes();
+    for category in &label.categories {
+        bytes.extend(
+            CategoryWire {
+                kind: kind_code(category.kind),
+                tag_len: text_len(&category.tag)?,
+                tag: category.tag.clone(),
+                uri_len: text_len(&category.uri)?,
+                uri: category.uri.clone(),
+                value_count: count(category.values.len())?,
+            }
+            .to_be_bytes(),
+        );
+        for value in &category.values {
+            bytes.extend(
+                ValueWire {
+                    value_len: text_len(value)?,
+                    value: value.clone(),
+                }
+                .to_be_bytes(),
+            );
+        }
+    }
+    Ok(bytes)
+}
+
+fn decode_label(bytes: &[u8]) -> Result<(ConfidentialityLabel, &[u8]), CodecError> {
+    let (wire, consumed) = LabelWire::try_from_be_bytes(bytes).map_err(malformed)?;
+    let mut rest = &bytes[consumed..];
+    let mut categories = Vec::with_capacity(usize::from(wire.category_count));
+    for _ in 0..wire.category_count {
+        let (category, consumed) = CategoryWire::try_from_be_bytes(rest).map_err(malformed)?;
+        rest = &rest[consumed..];
+        let mut values = Vec::with_capacity(usize::from(category.value_count));
+        for _ in 0..category.value_count {
+            let (value, consumed) = ValueWire::try_from_be_bytes(rest).map_err(malformed)?;
+            rest = &rest[consumed..];
+            values.push(value.value);
+        }
+        categories.push(Category {
+            kind: kind_from(category.kind)?,
+            tag: category.tag,
+            uri: category.uri,
+            values,
+        });
+    }
+    let label = ConfidentialityLabel {
+        policy: Policy {
+            name: wire.policy_name,
+            uri: wire.policy_uri,
+        },
+        classification: wire.classification,
+        categories,
+        created_at: present(wire.created_at),
+        review_at: present(wire.review_at),
+    };
+    Ok((label, rest))
+}
+
+fn optional_len(value: &Option<String>) -> Result<u8, CodecError> {
+    match value.as_deref() {
+        None => Ok(0),
+        Some("") => Err(CodecError::Encode(
+            "an optional label time cannot be empty".to_string(),
+        )),
+        Some(text) => text_len(text),
+    }
+}
+
+fn present(value: String) -> Option<String> {
+    match value.is_empty() {
+        true => None,
+        false => Some(value),
+    }
+}
+
+fn count(len: usize) -> Result<u8, CodecError> {
+    u8::try_from(len).map_err(|_| CodecError::Encode(format!("{len} entries exceed 255")))
+}
+
+fn kind_code(kind: CategoryKind) -> u8 {
+    match kind {
+        CategoryKind::Permissive => 0,
+        CategoryKind::Restrictive => 1,
+    }
+}
+
+fn kind_from(code: u8) -> Result<CategoryKind, CodecError> {
+    match code {
+        0 => Ok(CategoryKind::Permissive),
+        1 => Ok(CategoryKind::Restrictive),
+        other => Err(CodecError::Decode(format!("unknown category kind {other}"))),
     }
 }
 
@@ -313,6 +484,7 @@ mod tests {
             latitude: 49.2827,
             longitude: -123.1207,
             description: "Vehicle stationary".to_string(),
+            label: None,
         })
     }
 
@@ -325,6 +497,7 @@ mod tests {
             reported_at: "2026-10-11T00:45:00Z".to_string(),
             latitude: 45.5017,
             longitude: -73.5673,
+            label: None,
         })
     }
 
@@ -346,6 +519,7 @@ mod tests {
                 reported_at: "2026-09-29T15:00:00Z".to_string(),
                 summary: "Holding position".to_string(),
                 personnel_effective: 118,
+                label: None,
             }),
             C2Message::Rfi(Rfi {
                 id: "RFI-42".to_string(),
@@ -354,6 +528,7 @@ mod tests {
                 service: FunctionalService::Logistics,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Fuel state?".to_string(),
+                label: None,
             }),
             position(),
         ];
@@ -395,6 +570,52 @@ mod tests {
                 assert!(CompactCodec.decode(&bytes[..cut]).is_err(), "cut at {cut}");
             }
         }
+    }
+
+    fn labelled(msg: C2Message) -> C2Message {
+        let label = Some(crate::sample_label());
+        match msg {
+            C2Message::ContactReport(m) => C2Message::ContactReport(ContactReport { label, ..m }),
+            C2Message::Sitrep(m) => C2Message::Sitrep(Sitrep { label, ..m }),
+            C2Message::Rfi(m) => C2Message::Rfi(Rfi { label, ..m }),
+            C2Message::PositionReport(m) => {
+                C2Message::PositionReport(PositionReport { label, ..m })
+            }
+        }
+    }
+
+    #[test]
+    fn labelled_messages_round_trip_and_reject_every_truncation() {
+        for msg in [labelled(contact()), labelled(position())] {
+            let bytes = CompactCodec.encode(&msg).expect("encode");
+            assert_eq!(CompactCodec.decode(&bytes).expect("decode"), msg);
+            for cut in 0..bytes.len() {
+                assert!(CompactCodec.decode(&bytes[..cut]).is_err(), "cut at {cut}");
+            }
+        }
+    }
+
+    #[test]
+    fn label_adds_its_own_section_only() {
+        let plain = CompactCodec.encode(&position()).expect("encode");
+        let with_label = CompactCodec.encode(&labelled(position())).expect("encode");
+        assert_eq!(plain.len(), 57);
+        assert_eq!(with_label.len(), 57 + 133);
+        assert_eq!(plain[2..], with_label[2..57]);
+    }
+
+    #[test]
+    fn refuses_empty_optional_label_time() {
+        let mut label = crate::sample_label();
+        label.review_at = Some(String::new());
+        let C2Message::PositionReport(report) = position() else {
+            return;
+        };
+        let msg = C2Message::PositionReport(PositionReport {
+            label: Some(label),
+            ..report
+        });
+        assert!(CompactCodec.encode(&msg).is_err());
     }
 
     #[test]

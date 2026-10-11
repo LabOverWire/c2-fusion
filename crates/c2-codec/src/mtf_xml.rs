@@ -1,4 +1,4 @@
-use crate::{Codec, CodecError};
+use crate::{refuse_label, Codec, CodecError};
 use c2_model::C2Message;
 use serde_json::Value;
 
@@ -13,6 +13,7 @@ impl Codec for MtfXmlCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        refuse_label(msg, self.wire_format())?;
         let value = serde_json::to_value(msg).map_err(|e| CodecError::Encode(e.to_string()))?;
         Ok(value_to_xml(&value)?.into_bytes())
     }
@@ -124,6 +125,7 @@ mod tests {
             latitude: 49.2827,
             longitude: -123.1207,
             description: "Vehicle <light> & stationary".to_string(),
+            label: None,
         });
         let codec = MtfXmlCodec;
         let bytes = codec.encode(&msg).unwrap();
@@ -143,6 +145,7 @@ mod tests {
             reported_at: "2026-09-23T16:00:00Z".to_string(),
             summary: "Holding position".to_string(),
             personnel_effective: 118,
+            label: None,
         });
         let codec = MtfXmlCodec;
         let bytes = codec.encode(&msg).unwrap();
@@ -159,6 +162,7 @@ mod tests {
             reported_at: "2026-10-11T00:45:00Z".to_string(),
             latitude: -33.8688,
             longitude: 151.2093,
+            label: None,
         });
         let codec = MtfXmlCodec;
         let bytes = codec.encode(&msg).unwrap();

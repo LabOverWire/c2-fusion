@@ -7,6 +7,7 @@ use c2_lora::{
     open_serial, Config, Due, Frame, Inbound, Link, LoraError, Outgoing, Radio, ResetLine,
     MAX_DATA, MAX_IN_FLIGHT,
 };
+use c2_model::C2Message;
 use stitch_p2p::{Cursors, PeerId, RecordOutcome, SyncNode, WriteFrame};
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, sleep_until, Instant, MissedTickBehavior};
@@ -349,6 +350,10 @@ async fn apply(
     write: WriteFrame,
 ) {
     let id = write.id.clone();
+    let label = serde_json::from_slice::<C2Message>(&write.data)
+        .ok()
+        .and_then(|msg| msg.label().map(|label| label.classification.clone()))
+        .unwrap_or_else(|| "none".to_string());
     let origin = write.stamp.peer;
     let origin_seq = write.seq;
     let state = node.state();
@@ -378,7 +383,7 @@ async fn apply(
         _ => {}
     }
     println!(
-        "LORA name={name} rx write id={id} origin={} origin_seq={origin_seq} outcome={outcome:?} released={released} held={} from={source} rssi_dbm={rssi} snr={snr}",
+        "LORA name={name} rx write id={id} label={label} origin={} origin_seq={origin_seq} outcome={outcome:?} released={released} held={} from={source} rssi_dbm={rssi} snr={snr}",
         short(&origin),
         exchange.held.len()
     );

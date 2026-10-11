@@ -8,7 +8,7 @@ use quick_xml::Writer;
 
 use crate::codes::{domain_code, domain_from, service_code, service_from};
 use crate::niem::{check, C2F, MO, NC, USMTF};
-use crate::{Codec, CodecError};
+use crate::{refuse_label, Codec, CodecError};
 
 const CONTACT_REPORT: &str = "c2f:ContactReportMessage";
 const SITUATION_REPORT: &str = "c2f:SituationReportMessage";
@@ -36,6 +36,7 @@ impl Codec for NiemXmlCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        refuse_label(msg, self.wire_format())?;
         check(msg)?;
         let mut w = Writer::new(Vec::new());
         w.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
@@ -120,6 +121,7 @@ impl Codec for NiemXmlCodec {
                 latitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LATITUDE}"))?,
                 longitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LONGITUDE}"))?,
                 description: document.text("nc:DocumentDescriptionText")?,
+                label: None,
             })),
             SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
                 id: document.text(DOCUMENT_ID)?,
@@ -133,6 +135,7 @@ impl Codec for NiemXmlCodec {
                     .trim()
                     .parse()
                     .map_err(|e| CodecError::Decode(format!("personnel quantity: {e}")))?,
+                label: None,
             })),
             INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
                 id: document.text("nc:RequestIdentification/nc:IdentificationID")?,
@@ -141,6 +144,7 @@ impl Codec for NiemXmlCodec {
                 service: service_from(&document.text(SERVICE_CODE)?)?,
                 requested_at: document.text("nc:RequestDate/nc:DateTime")?,
                 question: document.text("nc:RequestText")?,
+                label: None,
             })),
             POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
                 id: document.text(DOCUMENT_ID)?,
@@ -150,6 +154,7 @@ impl Codec for NiemXmlCodec {
                 reported_at: document.text(CREATED_AT)?,
                 latitude: document.degrees(&format!("{UNIT_COORDINATE}/{LATITUDE}"))?,
                 longitude: document.degrees(&format!("{UNIT_COORDINATE}/{LONGITUDE}"))?,
+                label: None,
             })),
             other => Err(CodecError::Decode(format!(
                 "unknown NIEM message root {other}"
@@ -355,6 +360,7 @@ mod tests {
                 latitude: 45.5017,
                 longitude: -73.5673,
                 description: "Vehicle <light> & \"stationary\" near Saint-Rémi".to_string(),
+                label: None,
             }),
             C2Message::Sitrep(Sitrep {
                 id: "S-1".to_string(),
@@ -364,6 +370,7 @@ mod tests {
                 reported_at: "2026-09-29T15:00:00Z".to_string(),
                 summary: "Holding position".to_string(),
                 personnel_effective: 118,
+                label: None,
             }),
             C2Message::Rfi(Rfi {
                 id: "RFI-42".to_string(),
@@ -372,6 +379,7 @@ mod tests {
                 service: FunctionalService::Logistics,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Fuel state?".to_string(),
+                label: None,
             }),
             C2Message::PositionReport(PositionReport {
                 id: "POS-node-a".to_string(),
@@ -381,6 +389,7 @@ mod tests {
                 reported_at: "2026-10-11T00:45:00Z".to_string(),
                 latitude: -33.8688,
                 longitude: 151.2093,
+                label: None,
             }),
         ]
     }
@@ -439,6 +448,7 @@ mod tests {
                     latitude: 45.5017,
                     longitude: -73.5673,
                     description: "Vehicle stationary".to_string(),
+                    label: None,
                 }),
             ),
             ("sitrep.xml", messages().remove(1)),
@@ -453,6 +463,7 @@ mod tests {
                     reported_at: "2026-10-11T00:45:00Z".to_string(),
                     latitude: 45.5017,
                     longitude: -73.5673,
+                    label: None,
                 }),
             ),
         ];
@@ -492,6 +503,7 @@ mod tests {
                 service: FunctionalService::Intelligence,
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Bridge <intact>? \u{2713} & out".to_string(),
+                label: None,
             })
         );
     }

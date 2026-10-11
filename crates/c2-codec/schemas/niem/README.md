@@ -35,7 +35,8 @@ Both codecs check a message against the schema facets before encoding and refuse
 - `mo:UnitName` (position reports) must be a token of 4 to 100 characters;
 - latitude must be within -90 to 90 and longitude within -180 to 180 degrees;
 - times must be `xs:dateTime` values, and `mo:ObservationDateTime` must be in UTC (`Z`);
-- `usmtf:AvailablePersonnelQuantity` is documented for 0 to 9999 personnel, so a larger situation report is refused rather than misstated.
+- `usmtf:AvailablePersonnelQuantity` is documented for 0 to 9999 personnel, so a larger situation report is refused rather than misstated;
+- a message carrying a confidentiality label is refused, because the schema set has no element for it yet (see `docs/ncdf-alignment.md`).
 
 ## JSON representation
 

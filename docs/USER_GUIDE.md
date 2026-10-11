@@ -113,7 +113,7 @@ The broker also sweeps expired records on its own timer (roughly every 60 second
 
 ## Bearer profiles (optional)
 
-`harness/netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies an emulated tactical-bearer profile with `tc`/`netem`. Run it inside a container (it needs `NET_ADMIN`), not on the host. The bandwidth, delay, and loss values are placeholders pending real HF/UHF/SATCOM figures; treat them as illustrative. Loss in particular is only trustworthy with UDP segmentation offload disabled, so the harness applies rate and delay, not scripted loss.
+`harness/netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies an emulated tactical-bearer profile with `tc`/`netem`. Run it inside a container (it needs `NET_ADMIN`), not on the host. The bandwidth, delay, and loss values are placeholders pending real HF/UHF/SATCOM figures; treat them as illustrative. Loss in particular is only trustworthy with UDP segmentation offload disabled, so `netem-profiles.sh` applies rate and delay only; `harness/loss.sh` is the loss measurement, run with offload disabled (see `harness/README.md`).
 
 ## Troubleshooting
 
