@@ -58,7 +58,7 @@ The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem),
 
 ## Loss sweep
 
-`./loss.sh` applies random loss to the edge uplink at 0, 1, 5, 10 and 20 percent, three trials each. Each trial injects a new contact into edge and times it from edge's ingest log line to the first hq log line naming it, using Docker's log timestamps; after a 30-second window it reads netem's counters. The nodes publish their picture every 200 ms in this run. Loss is applied to edge's egress only, so packets toward edge, including QUIC acknowledgements, are not dropped.
+`./loss.sh` applies random loss to the edge uplink at 0, 1, 5, 10 and 20 percent, three trials each. Each trial injects a new contact into edge and times it from edge's ingest log line to the first hq log line naming it, using Docker's log timestamps; after a 30-second window it reads netem's counters. The nodes publish their picture every 200 ms in this run. Loss is applied to edge's egress only, so packets toward edge, including QUIC acknowledgements, are not dropped. `LOSS_RATES`, `LOSS_TRIALS` and `LOSS_WINDOW` override the rates, trials per rate and window; `LOSS_PROFILE` adds netem parameters applied together with the loss, so the same sweep runs under a bearer's rate and delay (for example `LOSS_PROFILE="rate 64kbit delay 40ms 15ms" LOSS_RATES="0 3" ./loss.sh`).
 
 Last run (2026-10-11), `loss.sh`:
 
@@ -82,6 +82,19 @@ configured trial  measured     packets    avg_bytes_pkt  convergence_s
 ```
 
 Every contact reached hq within 0.2 seconds up to 20 percent loss. The packets offered in each window grow with loss (about 1720 at 0 percent, about 1970 at 20 percent) as QUIC retransmits. Convergence is measured to the first hq log line, so it carries the timing of the 200 ms picture log.
+
+Under the bearer profiles of `netem-profiles.sh` (placeholder values, not measured bearer figures), run with `LOSS_PROFILE` and each profile's loss (2026-10-11, three trials per rate):
+
+```
+profile  netem                              loss  measured        avg_bytes_pkt  convergence_s
+uhf      rate 64kbit delay 40ms 15ms        0%    0.0 0.0 0.0%    126-127        0.34 0.27 0.20
+uhf      rate 64kbit delay 40ms 15ms        3%    3.2 2.7 2.5%    127-128        0.27 0.19 0.32
+satcom   rate 256kbit delay 300ms 40ms      0%    0.0 0.0 0.0%    130-131        0.33 0.48 0.45
+satcom   rate 256kbit delay 300ms 40ms      1%    1.2 1.0 1.0%    132-133        0.34 0.51 0.40
+hf       rate 2400bit delay 250ms 100ms     0%    did not converge within 120 s
+```
+
+Under HF the QUIC path does not converge even without loss: with no messages flowing, the edge already sends about 55 kbit/s (about 1720 packets of about 121 bytes per 30 seconds in the loss sweep), more than twenty times the profile's rate, so the queue saturates. The likely sources are the 200 ms sync polling interval, presence lease renewals and broker signalling; the traffic has not been broken down by source.
 
 ## Run it
 

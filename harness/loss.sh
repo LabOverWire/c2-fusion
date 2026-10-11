@@ -8,6 +8,7 @@ RATES="${LOSS_RATES:-0 1 5 10 20}"
 TRIALS="${LOSS_TRIALS:-3}"
 TIMEOUT=120
 WINDOW="${LOSS_WINDOW:-30}"
+read -r -a PROFILE <<< "${LOSS_PROFILE:-}"
 
 export C2_QUIC_SEGMENTATION_OFFLOAD=false
 export C2_PICTURE_INTERVAL_MS=200
@@ -43,13 +44,13 @@ print(f"{dropped / offered * 100 if offered else 0:.1f} {offered} {bytes_sent / 
 build_images
 start_and_converge
 
-log "loss sweep on the edge uplink (UDP segmentation offload disabled, ${TRIALS} trials per rate)"
+log "loss sweep on the edge uplink (profile: ${LOSS_PROFILE:-none}, UDP segmentation offload disabled, ${TRIALS} trials per rate)"
 printf '%-10s %-6s %-12s %-10s %-14s %s\n' "configured" "trial" "measured" "packets" "avg_bytes_pkt" "convergence_s"
 for rate in $RATES; do
     for trial in $(seq 1 "$TRIALS"); do
         id="LOSS-${rate}-${trial}"
         docker exec c2-edge tc qdisc del dev eth0 root 2>/dev/null || true
-        docker exec c2-edge tc qdisc add dev eth0 root netem loss "${rate}%"
+        docker exec c2-edge tc qdisc add dev eth0 root netem "${PROFILE[@]}" loss "${rate}%"
         window_end=$(( $(date +%s) + WINDOW ))
         inject "$id"
         deadline=$(( $(date +%s) + TIMEOUT ))
