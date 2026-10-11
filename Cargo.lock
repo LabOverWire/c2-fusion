@@ -265,6 +265,7 @@ dependencies = [
  "c2-gnss",
  "c2-lora",
  "c2-model",
+ "humantime",
  "mqp2p",
  "sha2",
  "stitch-p2p",

@@ -67,26 +67,26 @@ fn lora_settings() -> Result<Option<lora::LoraSettings>> {
 }
 
 #[cfg(target_os = "linux")]
-fn start_gnss(name: &str) -> Result<Option<tokio::task::JoinHandle<()>>> {
+fn gnss_settings() -> Result<Option<gnss::GnssSettings>> {
     let Ok(port) = std::env::var("C2_GNSS_PORT") else {
         return Ok(None);
     };
-    let settings = gnss::GnssSettings {
+    Ok(Some(gnss::GnssSettings {
         port,
         baud_rate: env_parse("C2_GNSS_BAUD", "115200")?,
         pps_chip: env_or("C2_PPS_CHIP", "/dev/gpiochip0"),
         pps_line: env_parse("C2_PPS_LINE", "20")?,
-    };
-    Ok(Some(tokio::spawn(gnss::run(settings, name.to_string()))))
+        position_interval: Duration::from_secs(env_parse("C2_POSITION_INTERVAL_S", "60")?),
+    }))
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start_gnss(name: &str) -> Result<Option<tokio::task::JoinHandle<()>>> {
+fn reject_gnss(name: &str) -> Result<()> {
     match std::env::var("C2_GNSS_PORT") {
         Ok(port) => {
             Err(format!("{name}: C2_GNSS_PORT={port} needs linux for pps and clock").into())
         }
-        Err(_) => Ok(None),
+        Err(_) => Ok(()),
     }
 }
 
@@ -242,7 +242,7 @@ async fn main() -> Result<()> {
         (Ok(user), Ok(pass)) => Some((user, pass)),
         _ => None,
     };
-    let mut tasks: Vec<tokio::task::JoinHandle<()>> = start_gnss(&name)?.into_iter().collect();
+    let mut tasks = Vec::new();
     let store = Arc::new(Store::new(node_identity(&name)));
 
     let outbox = match lora_settings()? {
@@ -258,6 +258,17 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
+
+    #[cfg(target_os = "linux")]
+    if let Some(settings) = gnss_settings()? {
+        let sharing = gnss::Sharing {
+            store: Arc::clone(&store),
+            outbox: outbox.clone(),
+        };
+        tasks.push(tokio::spawn(gnss::run(settings, name.clone(), sharing)));
+    }
+    #[cfg(not(target_os = "linux"))]
+    reject_gnss(&name)?;
 
     if let (Ok(fmt), Ok(file)) = (env_req("C2_INGEST_FMT"), env_req("C2_INGEST_FILE")) {
         let bytes = tokio::fs::read(&file).await?;

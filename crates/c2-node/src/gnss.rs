@@ -1,11 +1,18 @@
 use std::convert::Infallible;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
+use c2_exchange::ingest;
 use c2_gnss::{
     clock_offset, discipline_clock, monotonic_nanos, open_serial, request_fix_output, step_clock,
-    Gga, GnssError, NmeaReader, PpsEdge, PpsLine, Rmc, Sentence,
+    Gga, GnssError, NmeaReader, Position, PpsEdge, PpsLine, Rmc, Sentence,
 };
+use c2_model::{C2Message, Domain, FunctionalService, PositionReport};
+use stitch_p2p::Store;
+use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, sleep_until, Instant, MissedTickBehavior};
+
+use crate::announce;
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(60);
 const RECOVERY_BACKOFF: Duration = Duration::from_secs(5);
@@ -17,11 +24,17 @@ pub struct GnssSettings {
     pub baud_rate: u32,
     pub pps_chip: String,
     pub pps_line: u32,
+    pub position_interval: Duration,
 }
 
-pub async fn run(settings: GnssSettings, name: String) {
+pub struct Sharing {
+    pub store: Arc<Store>,
+    pub outbox: Option<mpsc::Sender<C2Message>>,
+}
+
+pub async fn run(settings: GnssSettings, name: String, sharing: Sharing) {
     loop {
-        let Err(error) = session(&settings, &name).await;
+        let Err(error) = session(&settings, &name, &sharing).await;
         eprintln!("GNSS name={name} error={error} recovering");
         sleep(RECOVERY_BACKOFF).await;
     }
@@ -36,7 +49,11 @@ struct Status {
     paired: u32,
 }
 
-async fn session(settings: &GnssSettings, name: &str) -> Result<Infallible, GnssError> {
+async fn session(
+    settings: &GnssSettings,
+    name: &str,
+    sharing: &Sharing,
+) -> Result<Infallible, GnssError> {
     let mut port = open_serial(&settings.port, settings.baud_rate)?;
     request_fix_output(&mut port).await?;
     let mut reader = NmeaReader::new(port);
@@ -49,6 +66,9 @@ async fn session(settings: &GnssSettings, name: &str) -> Result<Infallible, Gnss
     let mut report = interval(REPORT_INTERVAL);
     report.set_missed_tick_behavior(MissedTickBehavior::Delay);
     report.tick().await;
+    let mut position = interval(settings.position_interval);
+    position.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut disciplined = false;
     let mut last_edge: Option<PpsEdge> = None;
     let mut status = Status::default();
     let mut heard = Instant::now();
@@ -70,12 +90,13 @@ async fn session(settings: &GnssSettings, name: &str) -> Result<Infallible, Gnss
                         status.paired += 1;
                         status.offset_nanos = Some(offset);
                         status.worst_nanos = status.worst_nanos.max(offset.abs());
-                        if offset.abs() >= STEP_THRESHOLD_NANOS {
+                        disciplined = offset.abs() < STEP_THRESHOLD_NANOS;
+                        if disciplined {
+                            discipline_clock(offset)?;
+                        } else {
                             step_clock(offset)?;
                             println!("GNSS name={name} stepped-clock offset_ms={}", offset / 1_000_000);
                             last_edge = None;
-                        } else {
-                            discipline_clock(offset)?;
                         }
                     }
                 }
@@ -86,11 +107,38 @@ async fn session(settings: &GnssSettings, name: &str) -> Result<Infallible, Gnss
                 Err(error) => eprintln!("GNSS name={name} skip error={error}"),
             },
             _ = sleep_until(heard + SILENCE_LIMIT) => return Err(GnssError::Silent(SILENCE_LIMIT)),
+            _ = position.tick() => {
+                if let (true, Some(Gga { position: Some(fix), satellites, .. })) = (disciplined, status.fix) {
+                    share_position(name, sharing, fix, satellites).await;
+                }
+            }
             _ = report.tick() => {
                 log_status(name, &status);
                 status = Status { fix: status.fix, ..Status::default() };
             }
         }
+    }
+}
+
+async fn share_position(name: &str, sharing: &Sharing, fix: Position, satellites: u8) {
+    let msg = C2Message::PositionReport(PositionReport {
+        id: format!("POS-{name}"),
+        reporting_unit: name.to_string(),
+        domain: Domain::Land,
+        service: FunctionalService::CommandAndControl,
+        reported_at: humantime::format_rfc3339_seconds(SystemTime::now()).to_string(),
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+    });
+    match ingest(&sharing.store, &msg).await {
+        Ok(()) => {
+            println!(
+                "GNSS name={name} position-report id={} sats={satellites}",
+                msg.id()
+            );
+            announce(&sharing.outbox, name, &msg);
+        }
+        Err(error) => eprintln!("GNSS name={name} position-report error={error}"),
     }
 }
 

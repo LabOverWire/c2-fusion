@@ -1,13 +1,14 @@
 use bebytes::BeBytes;
 
 use crate::{Codec, CodecError};
-use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Rfi, Sitrep};
+use c2_model::{C2Message, ContactReport, Domain, FunctionalService, PositionReport, Rfi, Sitrep};
 
 const VERSION: u8 = 2;
 
 const CONTACT_REPORT: u8 = 0;
 const SITREP: u8 = 1;
 const RFI: u8 = 2;
+const POSITION_REPORT: u8 = 3;
 
 pub struct CompactCodec;
 
@@ -74,6 +75,21 @@ struct RfiWire {
     question: String,
 }
 
+#[derive(BeBytes, Debug, Clone, PartialEq)]
+struct PositionWire {
+    id_len: u8,
+    #[FromField(id_len)]
+    id: String,
+    unit_len: u8,
+    #[FromField(unit_len)]
+    reporting_unit: String,
+    time_len: u8,
+    #[FromField(time_len)]
+    reported_at: String,
+    latitude: f64,
+    longitude: f64,
+}
+
 impl Codec for CompactCodec {
     fn wire_format(&self) -> &'static str {
         "compact-bin"
@@ -129,6 +145,22 @@ impl Codec for CompactCodec {
                     requested_at: m.requested_at.clone(),
                     question_len: text_len(&m.question)?,
                     question: m.question.clone(),
+                }
+                .to_be_bytes(),
+            ),
+            C2Message::PositionReport(m) => (
+                POSITION_REPORT,
+                &m.domain,
+                &m.service,
+                PositionWire {
+                    id_len: text_len(&m.id)?,
+                    id: m.id.clone(),
+                    unit_len: text_len(&m.reporting_unit)?,
+                    reporting_unit: m.reporting_unit.clone(),
+                    time_len: text_len(&m.reported_at)?,
+                    reported_at: m.reported_at.clone(),
+                    latitude: m.latitude,
+                    longitude: m.longitude,
                 }
                 .to_be_bytes(),
             ),
@@ -190,6 +222,18 @@ impl Codec for CompactCodec {
                     service,
                     requested_at: wire.requested_at,
                     question: wire.question,
+                }))
+            }
+            POSITION_REPORT => {
+                let wire: PositionWire = whole(body)?;
+                Ok(C2Message::PositionReport(PositionReport {
+                    id: wire.id,
+                    reporting_unit: wire.reporting_unit,
+                    domain,
+                    service,
+                    reported_at: wire.reported_at,
+                    latitude: wire.latitude,
+                    longitude: wire.longitude,
                 }))
             }
             other => Err(CodecError::Decode(format!("unknown message kind {other}"))),
@@ -272,6 +316,24 @@ mod tests {
         })
     }
 
+    fn position() -> C2Message {
+        C2Message::PositionReport(PositionReport {
+            id: "POS-node-a".to_string(),
+            reporting_unit: "node-a".to_string(),
+            domain: Domain::Land,
+            service: FunctionalService::CommandAndControl,
+            reported_at: "2026-10-11T00:45:00Z".to_string(),
+            latitude: 45.5017,
+            longitude: -73.5673,
+        })
+    }
+
+    #[test]
+    fn position_report_fits_one_lora_frame() {
+        let bytes = CompactCodec.encode(&position()).expect("encode");
+        assert_eq!(bytes.len(), 57);
+    }
+
     #[test]
     fn every_message_kind_round_trips() {
         let messages = [
@@ -293,6 +355,7 @@ mod tests {
                 requested_at: "2026-09-29T16:00:00Z".to_string(),
                 question: "Fuel state?".to_string(),
             }),
+            position(),
         ];
         for msg in messages {
             let bytes = CompactCodec.encode(&msg).expect("encode");

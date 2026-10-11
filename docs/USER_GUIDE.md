@@ -24,7 +24,7 @@ Platform note: `tc`/`netem` shaping runs inside the Linux containers, not on the
 
 ## Repository layout
 
-- `crates/c2-model`: the canonical message model (contact report, situation report, request for information), each tagged with an operational domain and functional service.
+- `crates/c2-model`: the canonical message model (contact report, situation report, request for information, own-unit position report), each tagged with an operational domain and functional service.
 - `crates/c2-codec`: the `Codec` trait, a registry, and two codecs, `mtf-xml` and `niem-json`.
 - `crates/c2-exchange`: the ingest and egress boundary over the stitch-p2p store.
 - `crates/c2-node`: the node binary that registers with an MQDB broker, discovers peers, and bridges them into the sync session over QUIC.

@@ -111,7 +111,7 @@ fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use c2_model::{ContactReport, Domain, FunctionalService, Sitrep};
+    use c2_model::{ContactReport, Domain, FunctionalService, PositionReport, Sitrep};
 
     #[test]
     fn contact_report_round_trips_with_special_chars_and_floats() {
@@ -143,6 +143,22 @@ mod tests {
             reported_at: "2026-09-23T16:00:00Z".to_string(),
             summary: "Holding position".to_string(),
             personnel_effective: 118,
+        });
+        let codec = MtfXmlCodec;
+        let bytes = codec.encode(&msg).unwrap();
+        assert_eq!(codec.decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn position_report_round_trips() {
+        let msg = C2Message::PositionReport(PositionReport {
+            id: "POS-node-b".to_string(),
+            reporting_unit: "node-b".to_string(),
+            domain: Domain::Land,
+            service: FunctionalService::CommandAndControl,
+            reported_at: "2026-10-11T00:45:00Z".to_string(),
+            latitude: -33.8688,
+            longitude: 151.2093,
         });
         let codec = MtfXmlCodec;
         let bytes = codec.encode(&msg).unwrap();

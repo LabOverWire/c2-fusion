@@ -8,7 +8,7 @@ Prototype developed for the DND IDEaS Competitive Projects challenge W7714-24867
 
 A canonical, format-independent C2 message model with a pluggable codec layer. Military wire formats map onto the model as codecs, so support for a new or changed standard is a new codec, not a change to the core. This directly answers the challenge's requirement for a modular, extensible design that accommodates emerging standards.
 
-- `crates/c2-model`: the canonical model. Contact report, situation report, and request for information, each tagged with an operational domain and functional service.
+- `crates/c2-model`: the canonical model. Contact report, situation report, request for information, and own-unit position report, each tagged with an operational domain and functional service.
 - `crates/c2-codec`: the `Codec` trait, a registry, and two working codecs. `mtf-xml` (an XML Message Text Format representation, in the family of NATO APP-11 XML-MTF) and `niem-json` (a NIEM-style JSON exchange). Both round-trip the same canonical message, which is what proves the format-agnostic claim.
 - `crates/c2-exchange`: the ingest and egress boundary. A wire-format message is decoded by a codec and published to the stitch-p2p store; the converged store projects back into a shared C2 picture that can be re-exported in any codec's format. Integration tests show two nodes receiving different wire formats converge to one picture, that picture re-exports in a single format, and the picture reconverges after a link partition and rejoin.
 - `crates/c2-node`: the node binary. It registers with an MQDB broker under a heartbeat-renewed presence lease, discovers peers through it (`$DB/peers`), and lets `stitch_p2p::Swarm` bridge each discovered peer into the sync session over QUIC.

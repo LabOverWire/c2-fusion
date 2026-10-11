@@ -21,6 +21,7 @@ tokio-serial = "5.5.0"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
 tracing = "0.1.44"
 sha2 = "0.11"
+humantime = "2.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 c2-gnss = { version = "0.1.0", path = "../c2-gnss" }

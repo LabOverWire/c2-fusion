@@ -23,6 +23,7 @@ pub enum C2Message {
     ContactReport(ContactReport),
     Sitrep(Sitrep),
     Rfi(Rfi),
+    PositionReport(PositionReport),
 }
 
 impl C2Message {
@@ -31,6 +32,7 @@ impl C2Message {
             C2Message::ContactReport(m) => &m.id,
             C2Message::Sitrep(m) => &m.id,
             C2Message::Rfi(m) => &m.id,
+            C2Message::PositionReport(m) => &m.id,
         }
     }
 }
@@ -66,4 +68,15 @@ pub struct Rfi {
     pub service: FunctionalService,
     pub requested_at: String,
     pub question: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PositionReport {
+    pub id: String,
+    pub reporting_unit: String,
+    pub domain: Domain,
+    pub service: FunctionalService,
+    pub reported_at: String,
+    pub latitude: f64,
+    pub longitude: f64,
 }
