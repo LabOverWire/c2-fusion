@@ -1,0 +1,20 @@
+[package]
+name = "c2-lora"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytes = { version = "1.12.1" }
+c2-frame = { version = "0.1.0", path = "../c2-frame" }
+futures-util = { version = "0.3.34", default-features = false }
+heapless = "0.9.3"
+thiserror.workspace = true
+tokio = { version = "1.53.2", features = ["io-util", "time", "fs"] }
+tokio-serial = "5.5.0"
+tokio-util = { version = "0.7.20", features = ["codec"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "test-util", "time"] }
