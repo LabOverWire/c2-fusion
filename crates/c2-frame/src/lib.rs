@@ -128,6 +128,8 @@ mod tests {
 
     #[test]
     fn rejects_malformed_frames() {
+        assert_eq!(Frame::decode(&[]), Err(FrameError::Header));
+        assert_eq!(Frame::decode(&[0x10]), Err(FrameError::Header));
         assert_eq!(Frame::decode(&[0x10, 0x00]), Err(FrameError::Header));
         assert_eq!(
             Frame::decode(&[0x20, 0x00, 0x01, 1]),
