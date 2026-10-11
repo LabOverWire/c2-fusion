@@ -1,10 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use c2_exchange::radio::RadioMessage;
 use c2_lora::{
     open_serial, Config, Due, Frame, Inbound, Link, LoraError, Outgoing, Radio, ResetLine,
+    MAX_IN_FLIGHT,
 };
 use stitch_p2p::{Cursors, PeerId, RecordOutcome, SyncNode, WriteFrame};
 use tokio::sync::mpsc;
@@ -13,7 +14,7 @@ use tokio_serial::SerialStream;
 
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 const HELLO_INTERVAL: Duration = Duration::from_secs(30);
-const GAP_HELLO_SPACING: Duration = Duration::from_secs(5);
+const GAP_HELLO_SPACING: Duration = Duration::from_secs(15);
 const RECOVERY_BACKOFF: Duration = Duration::from_secs(5);
 const QUEUE_LIMIT: usize = 32;
 
@@ -52,13 +53,14 @@ fn short(peer: &PeerId) -> String {
     peer[..4].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-struct Outbound {
+struct Exchange {
     queue: VecDeque<WriteFrame>,
+    held: BTreeMap<(PeerId, u64), WriteFrame>,
     hello_due: bool,
     last_hello: Option<Instant>,
 }
 
-impl Outbound {
+impl Exchange {
     fn request_hello(&mut self) {
         self.hello_due = true;
     }
@@ -94,8 +96,9 @@ async fn session(
     health.tick().await;
     let mut hello = interval(HELLO_INTERVAL);
     hello.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut outbound = Outbound {
+    let mut exchange = Exchange {
         queue: VecDeque::new(),
+        held: BTreeMap::new(),
         hello_due: false,
         last_hello: None,
     };
@@ -103,27 +106,27 @@ async fn session(
     loop {
         let due = link.next_due().map(Instant::from_std);
         let ready_to_send =
-            link.has_capacity() && (outbound.hello_due || !outbound.queue.is_empty());
+            exchange.hello_due || (link.has_capacity() && !exchange.queue.is_empty());
         tokio::select! {
             biased;
             frame = radio.recv() => {
-                receive(&mut radio, link, node, name, &mut outbound, writes, frame?).await?;
+                receive(&mut radio, link, node, name, &mut exchange, writes, frame?).await?;
             }
             _ = wait_until(due) => retry(&mut radio, link, name).await?,
             _ = std::future::ready(()), if ready_to_send => {
-                send_next(&mut radio, link, node, name, &mut outbound).await?;
+                send_next(&mut radio, link, node, name, &mut exchange).await?;
             }
-            Some(frame) = writes.recv(), if outbound.queue.len() < QUEUE_LIMIT => {
-                outbound.queue.push_back(frame);
+            Some(frame) = writes.recv(), if exchange.queue.len() < QUEUE_LIMIT => {
+                exchange.queue.push_back(frame);
             }
-            _ = hello.tick() => outbound.request_hello(),
+            _ = hello.tick() => exchange.request_hello(),
             _ = health.tick() => {
                 let round_trip = radio.refresh().await?;
                 println!(
                     "LORA name={name} health ping_ms={} dropped_frames={} queued={}",
                     round_trip.as_millis(),
                     radio.dropped_frames(),
-                    outbound.queue.len()
+                    exchange.queue.len()
                 );
             }
         }
@@ -150,12 +153,13 @@ async fn send_next(
     link: &mut Link,
     node: &SyncNode,
     name: &str,
-    outbound: &mut Outbound,
+    exchange: &mut Exchange,
 ) -> Result<(), LoraError> {
-    let (message, label) = match outbound.hello_due {
+    let sending_hello = exchange.hello_due;
+    let (message, label) = match sending_hello {
         true => {
-            outbound.hello_due = false;
-            outbound.last_hello = Some(Instant::now());
+            exchange.hello_due = false;
+            exchange.last_hello = Some(Instant::now());
             let state = node.state();
             let guard = state.lock().await;
             let cursors = guard.cursors();
@@ -168,7 +172,7 @@ async fn send_next(
                 label,
             )
         }
-        false => match outbound.queue.pop_front() {
+        false => match exchange.queue.pop_front() {
             Some(frame) => {
                 let label = format!(
                     "write id={} origin={} origin_seq={}",
@@ -188,7 +192,12 @@ async fn send_next(
             return Ok(());
         }
     };
-    let outgoing = match link.originate(&payload, std::time::Instant::now()) {
+    let now = std::time::Instant::now();
+    let sent = match sending_hello {
+        true => link.datagram(&payload, now),
+        false => link.originate(&payload, now),
+    };
+    let outgoing = match sent {
         Ok(outgoing) => outgoing,
         Err(error) => {
             eprintln!(
@@ -213,7 +222,7 @@ async fn receive(
     link: &mut Link,
     node: &SyncNode,
     name: &str,
-    outbound: &mut Outbound,
+    exchange: &mut Exchange,
     writes: &mut mpsc::UnboundedReceiver<WriteFrame>,
     frame: Frame,
 ) -> Result<(), LoraError> {
@@ -226,17 +235,10 @@ async fn receive(
             ack,
         } => {
             transmit(radio, &ack).await?;
-            match RadioMessage::decode(payload) {
-                Ok(RadioMessage::Write(write)) => {
-                    apply(node, name, outbound, source, rssi, frame.snr, write).await;
-                }
-                Ok(RadioMessage::Hello { from, cursors }) => {
-                    answer_hello(node, name, outbound, writes, from, cursors).await;
-                }
-                Err(error) => eprintln!(
-                    "LORA name={name} rx-undecodable from={source} seq={sequence} rssi_dbm={rssi} error={error}"
-                ),
-            }
+            dispatch(node, name, exchange, writes, &frame, sequence, payload).await;
+        }
+        Inbound::Datagram { sequence, payload } => {
+            dispatch(node, name, exchange, writes, &frame, sequence, payload).await;
         }
         Inbound::Duplicate { sequence, ack } => {
             println!("LORA name={name} duplicate from={source} seq={sequence}");
@@ -256,49 +258,119 @@ async fn receive(
     Ok(())
 }
 
+async fn dispatch(
+    node: &SyncNode,
+    name: &str,
+    exchange: &mut Exchange,
+    writes: &mut mpsc::UnboundedReceiver<WriteFrame>,
+    frame: &Frame,
+    sequence: u16,
+    payload: &[u8],
+) {
+    let source = frame.source;
+    let rssi = frame.rssi_dbm;
+    match RadioMessage::decode(payload) {
+        Ok(RadioMessage::Write(write)) => {
+            apply(node, name, exchange, source, rssi, frame.snr, write).await;
+        }
+        Ok(RadioMessage::Hello { from, cursors }) => {
+            answer_hello(node, name, exchange, writes, from, cursors).await;
+        }
+        Err(error) => eprintln!(
+            "LORA name={name} rx-undecodable from={source} seq={sequence} rssi_dbm={rssi} error={error}"
+        ),
+    }
+}
+
 async fn apply(
     node: &SyncNode,
     name: &str,
-    outbound: &mut Outbound,
+    exchange: &mut Exchange,
     source: u16,
     rssi: i16,
     snr: i16,
     write: WriteFrame,
 ) {
     let id = write.id.clone();
-    let origin = short(&write.stamp.peer);
+    let origin = write.stamp.peer;
     let origin_seq = write.seq;
-    let outcome = node.state().lock().await.receive(write, now_millis());
-    if let RecordOutcome::Gap { .. } = outcome {
-        outbound.request_hello_after_gap();
+    let state = node.state();
+    let mut guard = state.lock().await;
+    let outcome = guard.receive(write.clone(), now_millis());
+    let mut released = 0;
+    match outcome {
+        RecordOutcome::Gap { .. } => {
+            if exchange.held.len() < QUEUE_LIMIT {
+                exchange.held.insert((origin, origin_seq), write);
+            }
+            exchange.request_hello_after_gap();
+        }
+        RecordOutcome::Appended => {
+            let mut next = origin_seq + 1;
+            while let Some(held) = exchange.held.remove(&(origin, next)) {
+                if guard.receive(held, now_millis()) != RecordOutcome::Appended {
+                    break;
+                }
+                released += 1;
+                next += 1;
+            }
+            exchange
+                .held
+                .retain(|(held_origin, seq), _| *held_origin != origin || *seq > next);
+        }
+        _ => {}
     }
     println!(
-        "LORA name={name} rx write id={id} origin={origin} origin_seq={origin_seq} outcome={outcome:?} from={source} rssi_dbm={rssi} snr={snr}"
+        "LORA name={name} rx write id={id} origin={} origin_seq={origin_seq} outcome={outcome:?} released={released} held={} from={source} rssi_dbm={rssi} snr={snr}",
+        short(&origin),
+        exchange.held.len()
     );
 }
 
 async fn answer_hello(
     node: &SyncNode,
     name: &str,
-    outbound: &mut Outbound,
+    exchange: &mut Exchange,
     writes: &mut mpsc::UnboundedReceiver<WriteFrame>,
     from: PeerId,
     cursors: Cursors,
 ) {
+    let state = node.state();
+    let mut guard = state.lock().await;
+    guard.note_peer_cursors(from, cursors.clone());
+    if !queue_is_stale(&exchange.queue, &cursors) && !exchange.queue.is_empty() {
+        println!(
+            "LORA name={name} rx hello from={} deferred queued={}",
+            short(&from),
+            exchange.queue.len()
+        );
+        return;
+    }
     while writes.try_recv().is_ok() {}
-    let delta = {
-        let state = node.state();
-        let mut guard = state.lock().await;
-        guard.note_peer_cursors(from, cursors.clone());
-        guard.delta_since(&cursors)
-    };
+    let delta = guard.delta_since(&cursors);
     let missing = delta.len();
-    outbound.queue = delta.into_iter().take(QUEUE_LIMIT).collect();
+    exchange.queue = delta.into_iter().take(QUEUE_LIMIT).collect();
     println!(
         "LORA name={name} rx hello from={} missing={missing} queued={}",
         short(&from),
-        outbound.queue.len()
+        exchange.queue.len()
     );
+}
+
+fn queue_is_stale(queue: &VecDeque<WriteFrame>, cursors: &Cursors) -> bool {
+    let mut origins: Vec<PeerId> = Vec::new();
+    for frame in queue {
+        if origins.contains(&frame.stamp.peer) {
+            continue;
+        }
+        origins.push(frame.stamp.peer);
+        let delivered = cursors.get(&frame.stamp.peer).copied().unwrap_or(0);
+        let in_window = delivered < frame.seq && frame.seq <= delivered + 1 + MAX_IN_FLIGHT as u64;
+        if !in_window {
+            return true;
+        }
+    }
+    false
 }
 
 async fn retry(

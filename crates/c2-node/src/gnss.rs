@@ -15,6 +15,7 @@ const REPORT_INTERVAL: Duration = Duration::from_secs(60);
 const RECOVERY_BACKOFF: Duration = Duration::from_secs(5);
 const SILENCE_LIMIT: Duration = Duration::from_secs(5);
 const STEP_THRESHOLD_NANOS: i64 = 500_000_000;
+const SHARE_JITTER_MS: u64 = 10_000;
 
 pub struct GnssSettings {
     pub port: String,
@@ -76,7 +77,7 @@ async fn session(
                     status.fix = Some(gga);
                     if let (true, Some(fix)) = (disciplined && heard >= next_share, gga.position) {
                         share_position(name, store, fix, gga.satellites).await;
-                        next_share = heard + settings.position_interval;
+                        next_share = heard + settings.position_interval + share_jitter();
                     }
                 }
                 Ok(Sentence::Rmc(rmc)) => {
@@ -108,6 +109,13 @@ async fn session(
             }
         }
     }
+}
+
+fn share_jitter() -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    Duration::from_millis(u64::from(nanos) % SHARE_JITTER_MS)
 }
 
 async fn share_position(name: &str, store: &Store, fix: Position, satellites: u8) {

@@ -6,12 +6,13 @@ use crate::at::MAX_PAYLOAD;
 
 pub const MAX_DATA: usize = MAX_PAYLOAD - HEADER_LEN;
 pub const MAX_PEERS: usize = 8;
-pub const MAX_IN_FLIGHT: usize = 2;
+pub const MAX_IN_FLIGHT: usize = 1;
 pub const BROADCAST: u16 = 0;
 
 const RECENT: usize = 32;
 const MAX_ATTEMPTS: u8 = 4;
-const RETRY_BASE: Duration = Duration::from_secs(2);
+const RETRY_BASE: Duration = Duration::from_secs(3);
+const SEND_SPACING_MS: u64 = 800;
 const RETRY_JITTER_MS: u64 = 2000;
 const ACK_JITTER_MS: u64 = 300;
 const PEER_EXPIRY: Duration = Duration::from_secs(300);
@@ -43,6 +44,10 @@ pub enum Inbound<'a> {
     },
     UnknownAck {
         sequence: u16,
+    },
+    Datagram {
+        sequence: u16,
+        payload: &'a [u8],
     },
     Invalid(FrameError),
 }
@@ -116,12 +121,13 @@ impl Link {
         let sequence = self.next_sequence;
         self.next_sequence = sequence.wrapping_add(1);
         let frame = Frame::Data { sequence, payload }.encode();
+        let spacing = Duration::from_millis(self.random() % SEND_SPACING_MS);
         let awaiting = self.live_peers(now);
         let entry = InFlight {
             sequence,
             frame: frame.clone(),
             attempts: 1,
-            due: now + self.backoff(1),
+            due: now + spacing + self.backoff(1),
             awaiting,
         };
         if self.in_flight.push(entry).is_err() {
@@ -131,6 +137,20 @@ impl Link {
             destination: BROADCAST,
             sequence,
             bytes: frame,
+            not_before: now + spacing,
+        })
+    }
+
+    pub fn datagram(&mut self, payload: &[u8], now: Instant) -> Result<Outgoing, LinkError> {
+        if payload.is_empty() || payload.len() > MAX_DATA {
+            return Err(LinkError::PayloadSize(payload.len()));
+        }
+        let sequence = self.next_sequence;
+        self.next_sequence = sequence.wrapping_add(1);
+        Ok(Outgoing {
+            destination: BROADCAST,
+            sequence,
+            bytes: Frame::Datagram { sequence, payload }.encode(),
             not_before: now,
         })
     }
@@ -167,6 +187,7 @@ impl Link {
                 }
             }
             Frame::Ack { sequence } => self.acknowledge(source, sequence),
+            Frame::Datagram { sequence, payload } => Inbound::Datagram { sequence, payload },
         }
     }
 
@@ -438,6 +459,36 @@ mod tests {
             link.receive(2, &ack_for(500), start),
             Inbound::UnknownAck { sequence: 500 }
         ));
+    }
+
+    #[test]
+    fn datagrams_are_neither_tracked_nor_acknowledged() {
+        let start = Instant::now();
+        let mut link = Link::new(5);
+        link.receive(2, &data_from(1, b"x"), start);
+        let sent = link.originate(b"a", start).expect("originate");
+        assert!(!link.has_capacity());
+        let due_before = link.next_due();
+
+        let datagram = link.datagram(b"hello", start).expect("datagram");
+        assert_eq!(datagram.destination, BROADCAST);
+        assert_eq!(sequence_of(&datagram), sent.sequence.wrapping_add(1));
+        assert_eq!(link.next_due(), due_before);
+        assert!(!link.has_capacity());
+
+        let incoming = Frame::Datagram {
+            sequence: 77,
+            payload: b"hi",
+        }
+        .encode();
+        assert_eq!(
+            link.receive(3, &incoming, start),
+            Inbound::Datagram {
+                sequence: 77,
+                payload: b"hi",
+            }
+        );
+        assert_eq!(link.datagram(&[], start), Err(LinkError::PayloadSize(0)));
     }
 
     #[test]

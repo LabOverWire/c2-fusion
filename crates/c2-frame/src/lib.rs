@@ -12,6 +12,7 @@ pub const HEADER_LEN: usize = 3;
 
 const DATA: u8 = 0;
 const ACK: u8 = 1;
+const DATAGRAM: u8 = 2;
 
 #[derive(BeBytes, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
@@ -26,6 +27,7 @@ pub struct Header {
 pub enum Frame<'a> {
     Data { sequence: u16, payload: &'a [u8] },
     Ack { sequence: u16 },
+    Datagram { sequence: u16, payload: &'a [u8] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +56,9 @@ impl core::error::Error for FrameError {}
 impl<'a> Frame<'a> {
     pub fn sequence(&self) -> u16 {
         match self {
-            Frame::Data { sequence, .. } | Frame::Ack { sequence } => *sequence,
+            Frame::Data { sequence, .. }
+            | Frame::Ack { sequence }
+            | Frame::Datagram { sequence, .. } => *sequence,
         }
     }
 
@@ -62,6 +66,7 @@ impl<'a> Frame<'a> {
         let (kind, payload) = match self {
             Frame::Data { payload, .. } => (DATA, *payload),
             Frame::Ack { .. } => (ACK, &[][..]),
+            Frame::Datagram { payload, .. } => (DATAGRAM, *payload),
         };
         let header = Header {
             version: VERSION,
@@ -90,6 +95,11 @@ impl<'a> Frame<'a> {
                 sequence: header.sequence,
             }),
             (ACK, extra) => Err(FrameError::TrailingAck(extra)),
+            (DATAGRAM, 0) => Err(FrameError::EmptyData),
+            (DATAGRAM, _) => Ok(Frame::Datagram {
+                sequence: header.sequence,
+                payload: rest,
+            }),
             (kind, _) => Err(FrameError::Kind(kind)),
         }
     }
@@ -121,6 +131,10 @@ mod tests {
                 payload: &payload,
             },
             Frame::Ack { sequence: 0 },
+            Frame::Datagram {
+                sequence: 9,
+                payload: &payload,
+            },
         ] {
             assert_eq!(Frame::decode(&frame.encode()), Ok(frame));
         }
@@ -144,5 +158,9 @@ mod tests {
             Err(FrameError::TrailingAck(1))
         );
         assert_eq!(Frame::decode(&[0x15, 0x00, 0x01]), Err(FrameError::Kind(5)));
+        assert_eq!(
+            Frame::decode(&[0x12, 0x00, 0x01]),
+            Err(FrameError::EmptyData)
+        );
     }
 }
