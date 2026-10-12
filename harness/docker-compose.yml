@@ -1,19 +1,35 @@
 services:
+  router:
+    image: c2-router:poc
+    container_name: c2-router
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.254
+      c2edge:
+        ipv4_address: 10.231.1.254
+
   mqdb:
     image: mqdb-run:poc
     container_name: c2-mqdb
-    command: ["agent", "start", "--bind", "0.0.0.0:1883", "--db", "/data", "--passwd", "/auth/passwd.txt", "--admin-users", "c2"]
-    networks: [c2net]
+    cap_add: [NET_ADMIN]
+    entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/mqdb agent start --bind 0.0.0.0:1883 --db /data --passwd /auth/passwd.txt --admin-users c2"]
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.2
 
   edge:
     image: c2-node:poc
     container_name: c2-edge
     cap_add: [NET_ADMIN]
-    depends_on: [mqdb]
+    depends_on: [mqdb, router]
+    entrypoint: ["sh", "-c", "ip route add 10.231.0.0/24 via 10.231.1.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: edge
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
-      C2_BROKER: mqdb:1883
+      C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
@@ -24,20 +40,24 @@ services:
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
       C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
+      C2_LEASE_SECS: "${C2_LEASE_SECS:-6}"
     volumes:
       - ./messages:/messages:ro
       - ./run/inbox/edge:/inbox
-    networks: [c2net]
+    networks:
+      c2edge:
+        ipv4_address: 10.231.1.10
 
   relay:
     image: c2-node:poc
     container_name: c2-relay
     cap_add: [NET_ADMIN]
-    depends_on: [mqdb]
+    depends_on: [mqdb, router]
+    entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: relay
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
-      C2_BROKER: mqdb:1883
+      C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
@@ -46,19 +66,23 @@ services:
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
       C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
+      C2_LEASE_SECS: "${C2_LEASE_SECS:-6}"
     volumes:
       - ./messages:/messages:ro
-    networks: [c2net]
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.11
 
   hq:
     image: c2-node:poc
     container_name: c2-hq
     cap_add: [NET_ADMIN]
-    depends_on: [mqdb]
+    depends_on: [mqdb, router]
+    entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: hq
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
-      C2_BROKER: mqdb:1883
+      C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
@@ -67,10 +91,21 @@ services:
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
       C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
+      C2_LEASE_SECS: "${C2_LEASE_SECS:-6}"
     volumes:
       - ./messages:/messages:ro
-    networks: [c2net]
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.12
 
 networks:
   c2net:
     name: c2net
+    ipam:
+      config:
+        - subnet: 10.231.0.0/24
+  c2edge:
+    name: c2edge
+    ipam:
+      config:
+        - subnet: 10.231.1.0/24

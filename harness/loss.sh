@@ -29,29 +29,40 @@ inject() {
     mv "$HARNESS_DIR/run/inbox/edge/$id.tmp" "$HARNESS_DIR/run/inbox/edge/$id.json"
 }
 
-netem_stats() {
-    docker exec c2-edge tc -s qdisc show dev eth0 | python3 -c '
+direction_stats() {
+    docker exec c2-router tc -s qdisc show dev "$(router_iface "$1")" | python3 -c '
 import re, sys
-text = sys.stdin.read()
-sent = re.search(r"Sent (\d+) bytes (\d+) pkt \(dropped (\d+)", text)
+sent = re.search(r"Sent (\d+) bytes (\d+) pkt \(dropped (\d+)", sys.stdin.read())
 if not sent:
     sys.exit("no netem statistics")
-bytes_sent, packets, dropped = (int(group) for group in sent.groups())
-offered = packets + dropped
-print(f"{dropped / offered * 100 if offered else 0:.1f} {offered} {bytes_sent / packets if packets else 0:.0f}")
+print(*sent.groups())
 '
+}
+
+netem_stats() {
+    python3 -c '
+import sys
+up = [int(value) for value in sys.argv[1].split()]
+down = [int(value) for value in sys.argv[2].split()]
+def loss(stats):
+    offered = stats[1] + stats[2]
+    return stats[2] / offered * 100 if offered else 0
+packets = up[1] + down[1]
+offered = packets + up[2] + down[2]
+print(f"{loss(up):.1f} {loss(down):.1f} {offered} {(up[0] + down[0]) / packets if packets else 0:.0f}")
+' "$(direction_stats "$CORE_SIDE")" "$(direction_stats "$EDGE_SIDE")"
 }
 
 build_images
 start_and_converge
 
-log "loss sweep on the edge uplink (profile: ${LOSS_PROFILE:-none}, UDP segmentation offload disabled, ${TRIALS} trials per rate)"
-printf '%-10s %-6s %-12s %-10s %-14s %s\n' "configured" "trial" "measured" "packets" "avg_bytes_pkt" "convergence_s"
+log "loss sweep on the edge link through the router, both directions (profile: ${LOSS_PROFILE:-none}, UDP segmentation offload disabled, ${TRIALS} trials per rate)"
+printf '%-10s %-6s %-12s %-12s %-10s %-14s %s\n' "configured" "trial" "from_edge" "to_edge" "packets" "avg_bytes_pkt" "convergence_s"
 for rate in $RATES; do
     for trial in $(seq 1 "$TRIALS"); do
         id="LOSS-${rate}-${trial}"
-        docker exec c2-edge tc qdisc del dev eth0 root 2>/dev/null || true
-        docker exec c2-edge tc qdisc add dev eth0 root netem "${PROFILE[@]}" loss "${rate}%"
+        unshape
+        shape "${PROFILE[@]}" loss "${rate}%"
         window_end=$(( $(date +%s) + WINDOW ))
         inject "$id"
         deadline=$(( $(date +%s) + TIMEOUT ))
@@ -68,10 +79,10 @@ for rate in $RATES; do
             sleep 1
         done
         convergence="$(python3 -c 'import sys; print(f"{float(sys.argv[2]) - float(sys.argv[1]):.2f}")' "$(epoch_of "$ingested")" "$(epoch_of "$seen")")"
-        read -r measured packets average <<< "$(netem_stats)"
-        printf '%-10s %-6s %-12s %-10s %-14s %s\n' "${rate}%" "$trial" "${measured}%" "$packets" "$average" "$convergence"
+        read -r from_edge to_edge packets average <<< "$(netem_stats)"
+        printf '%-10s %-6s %-12s %-12s %-10s %-14s %s\n' "${rate}%" "$trial" "${from_edge}%" "${to_edge}%" "$packets" "$average" "$convergence"
     done
 done
-docker exec c2-edge tc qdisc del dev eth0 root 2>/dev/null || true
+unshape
 
 log "LOSS SWEEP COMPLETE"

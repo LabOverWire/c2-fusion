@@ -6,7 +6,39 @@ HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 C2_DIR="$(cd "$HARNESS_DIR/.." && pwd)"
 MQDB_DIR="$(cd "$C2_DIR/../../MQDB" && pwd)"
 
+EDGE_SIDE=10.231.1.254
+CORE_SIDE=10.231.0.254
+
 compose() { docker compose -f "$HARNESS_DIR/docker-compose.yml" "$@"; }
+
+router_iface() {
+    docker exec c2-router ip -o -4 addr show | awk -v ip="$1/" 'index($4, ip) == 1 { print $2 }'
+}
+
+shape() {
+    local side
+    for side in "$EDGE_SIDE" "$CORE_SIDE"; do
+        docker exec c2-router tc qdisc replace dev "$(router_iface "$side")" root netem "$@"
+    done
+}
+
+unshape() {
+    local side
+    for side in "$EDGE_SIDE" "$CORE_SIDE"; do
+        docker exec c2-router tc qdisc del dev "$(router_iface "$side")" root 2>/dev/null || true
+    done
+}
+
+show_shaping() {
+    local side
+    for side in "$EDGE_SIDE" "$CORE_SIDE"; do
+        docker exec c2-router tc -s qdisc show dev "$(router_iface "$side")"
+    done
+}
+
+partition_edge() { docker exec c2-router ip link set "$(router_iface "$EDGE_SIDE")" down; }
+
+heal_edge() { docker exec c2-router ip link set "$(router_iface "$EDGE_SIDE")" up; }
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
@@ -37,6 +69,9 @@ build_images() {
     log "build MQDB runtime image (alpine base + baked dev auth)"
     docker build -t mqdb-run:poc -f "$HARNESS_DIR/mqdb.Dockerfile" "$HARNESS_DIR"
 
+    log "build router image"
+    docker build -t c2-router:poc -f "$HARNESS_DIR/router.Dockerfile" "$HARNESS_DIR"
+
     log "build c2-node image"
     docker build -t c2-node:poc -f "$HARNESS_DIR/Dockerfile" "$C2_DIR"
 }
@@ -45,7 +80,7 @@ start_and_converge() {
     log "prepare run dirs"
     mkdir -p "$HARNESS_DIR/run/inbox/edge"
 
-    log "bring up MQDB broker and three nodes"
+    log "bring up the router, MQDB broker and three nodes (edge reaches the others only through the router)"
     compose up -d
 
     log "wait for discovery + convergence via MQDB (all nodes count=3)"

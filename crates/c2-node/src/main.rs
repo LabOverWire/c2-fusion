@@ -21,7 +21,6 @@ mod lora;
 const RETRY: Duration = Duration::from_secs(1);
 const BROKER_RETRY_MAX: Duration = Duration::from_secs(60);
 const BROKER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const LEASE_SECS: u64 = 6;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -103,6 +102,7 @@ async fn connect_and_register(settings: &MeshSettings) -> Peer {
         bind,
         credentials,
         segmentation_offload,
+        lease_secs,
         ..
     } = settings;
     let mut delay = RETRY;
@@ -111,7 +111,7 @@ async fn connect_and_register(settings: &MeshSettings) -> Peer {
             let mut config = PeerConfig::new(name.as_str(), broker.as_str())
                 .without_stun()
                 .with_bind_addr(*bind)
-                .with_lease_secs(LEASE_SECS);
+                .with_lease_secs(*lease_secs);
             if !segmentation_offload {
                 config = config.without_segmentation_offload();
             }
@@ -162,6 +162,7 @@ struct MeshSettings {
     segmentation_offload: bool,
     pull: Duration,
     discovery: Duration,
+    lease_secs: u64,
 }
 
 async fn join_mesh(settings: MeshSettings, node: SyncNode) -> Swarm {
@@ -289,6 +290,7 @@ async fn main() -> Result<()> {
             segmentation_offload: env_parse("C2_QUIC_SEGMENTATION_OFFLOAD", "true")?,
             pull: Duration::from_millis(env_parse("C2_PULL_MS", "200")?),
             discovery: Duration::from_millis(env_parse("C2_DISCOVERY_MS", "2000")?),
+            lease_secs: env_parse("C2_LEASE_SECS", "6")?,
         },
         store.node().clone(),
     ));
