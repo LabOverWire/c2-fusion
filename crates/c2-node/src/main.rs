@@ -161,11 +161,12 @@ struct MeshSettings {
     credentials: Option<(String, String)>,
     segmentation_offload: bool,
     pull: Duration,
+    discovery: Duration,
 }
 
 async fn join_mesh(settings: MeshSettings, node: SyncNode) -> Swarm {
     let peer = connect_and_register(&settings).await;
-    Swarm::spawn(Arc::new(peer), node, settings.pull)
+    Swarm::spawn_with_discovery_interval(Arc::new(peer), node, settings.pull, settings.discovery)
 }
 
 async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
@@ -287,6 +288,7 @@ async fn main() -> Result<()> {
             credentials,
             segmentation_offload: env_parse("C2_QUIC_SEGMENTATION_OFFLOAD", "true")?,
             pull: Duration::from_millis(env_parse("C2_PULL_MS", "200")?),
+            discovery: Duration::from_millis(env_parse("C2_DISCOVERY_MS", "2000")?),
         },
         store.node().clone(),
     ));

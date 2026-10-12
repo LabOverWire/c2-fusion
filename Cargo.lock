@@ -1376,7 +1376,7 @@ dependencies = [
 [[package]]
 name = "mqp2p"
 version = "0.3.0"
-source = "git+https://github.com/LabOverWire/stitch-rs#b98408eed6b5e81914fe1ea2f35f6d9d4de99777"
+source = "git+https://github.com/LabOverWire/stitch-rs#bf127b8b316167b39e55a3bfc5b108a0fbbef65e"
 dependencies = [
  "flume",
  "mqtt5",
@@ -2332,8 +2332,8 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stitch-p2p"
-version = "0.1.0"
-source = "git+https://github.com/LabOverWire/stitch-rs#b98408eed6b5e81914fe1ea2f35f6d9d4de99777"
+version = "0.1.1"
+source = "git+https://github.com/LabOverWire/stitch-rs#bf127b8b316167b39e55a3bfc5b108a0fbbef65e"
 dependencies = [
  "fjall",
  "mqp2p",

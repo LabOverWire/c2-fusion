@@ -96,7 +96,7 @@ hf       rate 2400bit delay 250ms 100ms     0%    did not converge within 120 s
 
 Under HF the QUIC path does not converge even without loss: with no messages flowing, the edge already sends about 55 kbit/s (about 1720 packets of about 121 bytes per 30 seconds in the loss sweep), more than twenty times the profile's rate, so the queue saturates. The likely sources are the 200 ms sync polling interval, presence lease renewals and broker signalling; the traffic has not been broken down by source.
 
-`C2_PULL_MS` sets the sync pull interval (default 200 ms); with the current `Swarm::spawn` the discovery poll runs at the same interval. Rerun of the HF profile with `C2_PULL_MS=30000`, the cadence the LoRa bearer uses (2026-10-11):
+`C2_PULL_MS` sets the sync pull interval (default 200 ms) and `C2_DISCOVERY_MS` how often a node asks the broker for peers (default 2000 ms). Rerun of the HF profile with both at 30000 ms, the cadence the LoRa bearer uses (2026-10-11):
 
 ```
 profile  netem                              loss  measured           packets   avg_bytes_pkt  convergence_s

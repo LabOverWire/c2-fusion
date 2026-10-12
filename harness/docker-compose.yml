@@ -23,6 +23,7 @@ services:
       C2_INBOX_FMT: c2-json
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
+      C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
     volumes:
       - ./messages:/messages:ro
       - ./run/inbox/edge:/inbox
@@ -44,6 +45,7 @@ services:
       C2_INGEST_FILE: /messages/relay.json
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
+      C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
     volumes:
       - ./messages:/messages:ro
     networks: [c2net]
@@ -64,6 +66,7 @@ services:
       C2_INGEST_FILE: /messages/hq.json
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
       C2_PULL_MS: "${C2_PULL_MS:-200}"
+      C2_DISCOVERY_MS: "${C2_DISCOVERY_MS:-2000}"
     volumes:
       - ./messages:/messages:ro
     networks: [c2net]
