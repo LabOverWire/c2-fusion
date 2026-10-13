@@ -115,6 +115,10 @@ The broker also sweeps expired records on its own timer (roughly every 60 second
 
 `harness/monitoring.sh` runs the same partition and recovery with the OpenTelemetry exporter on, through a collector into Prometheus and Grafana, and prints peer counts, distinct pictures and replication lag from Prometheus at each stage. Run it with `KEEP=1` to leave the stack up and open Grafana at http://127.0.0.1:3000 (the home dashboard is the example `c2-fusion exchange` dashboard). The interface, every metric, and the Prometheus and Splunk ingest paths are documented in [monitoring.md](monitoring.md).
 
+## Event stream (optional)
+
+`harness/events.sh` runs the partition and recovery with the event stream on at edge and hq and the reference consumer (`examples/events_consumer.py`) attached to each, then checks that each consumer's copy of the picture has the same digest as its node. To watch a stream by hand, set `C2_EVENTS_LISTEN` on a node and run `python3 examples/events_consumer.py --port <port>`. The line format and its guarantees are in [events.md](events.md).
+
 ## Bearer profiles (optional)
 
 `harness/netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies an emulated tactical-bearer profile (rate, delay and loss) with `tc`/`netem` to one interface. In the harness the edge link runs through the `c2-router` container, so a profile belongs on both of the router's interfaces (it needs `NET_ADMIN`; run it inside the container, not on the host). The values are placeholders pending real HF/UHF/SATCOM figures; treat them as illustrative. Loss is only trustworthy with UDP segmentation offload disabled in the nodes, so for measurements use `harness/loss.sh`, which disables offload and takes a profile through `LOSS_PROFILE` (see `harness/README.md`).

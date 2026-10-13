@@ -2,3 +2,4 @@
 **/*.rs.bk
 .DS_Store
 harness/run/
+__pycache__/

@@ -22,10 +22,11 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 tracing = "0.1.44"
 sha2 = "0.11"
 humantime = "2.4"
-serde_json.workspace = true
+serde_json = { version = "1.0.151", features = ["raw_value", "float_roundtrip"] }
 opentelemetry = { version = "0.33.1", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.33.1", features = ["metrics"] }
 opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["metrics", "http-proto", "reqwest-blocking-client"] }
+serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 c2-gnss = { version = "0.1.0", path = "../c2-gnss" }

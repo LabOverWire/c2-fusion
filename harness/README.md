@@ -125,6 +125,34 @@ Every contact converged within 4.6 seconds, with and without loss. A new write i
 
 The metrics, the queries behind these columns and the ingest paths are in [../docs/monitoring.md](../docs/monitoring.md).
 
+## Event stream
+
+`./events.sh` turns on the event stream at edge and hq (published on 127.0.0.1:7601 and 127.0.0.1:7600), attaches the reference consumer to each, partitions edge, injects C-2 at edge, heals, and checks each consumer's picture digest against its node's `PICTURE` digest. Run on 2026-10-13:
+
+```
+--- consumer on hq
+HELLO node=hq schema=1
+READY node=hq count=3
+CONSUMER node=hq count=3 digest=cf369d04 labelled=0 types=ContactReport:1,Rfi:1,Sitrep:1
+CHANGE node=hq seq=5 op=insert id=C-2 origin=remote type=ContactReport at=2026-10-13T19:55:25.049Z
+CONSUMER node=hq count=4 digest=fb17f9a0 labelled=0 types=ContactReport:2,Rfi:1,Sitrep:1
+hq: consumer picture digest fb17f9a0 matches the node's PICTURE digest
+--- consumer on edge
+HELLO node=edge schema=1
+READY node=edge count=3
+CONSUMER node=edge count=3 digest=cf369d04 labelled=0 types=ContactReport:1,Rfi:1,Sitrep:1
+CHANGE node=edge seq=5 op=insert id=C-2 origin=local type=ContactReport at=2026-10-13T19:55:14.988Z
+CONSUMER node=edge count=4 digest=fb17f9a0 labelled=0 types=ContactReport:2,Rfi:1,Sitrep:1
+edge: consumer picture digest fb17f9a0 matches the node's PICTURE digest
+edge consumer saw C-2 as a local insert during the partition
+hq consumer saw C-2 as a remote insert after the heal
+EVENTS PASSED: snapshot, live local and remote changes, consumer picture equals node picture
+```
+
+Edge's consumer saw C-2 at ingest during the partition, hq's about 10 seconds later, after the heal.
+
+The line format is in [../docs/events.md](../docs/events.md).
+
 ## Run it
 
 ```
@@ -132,6 +160,7 @@ The metrics, the queries behind these columns and the ingest paths are in [../do
 ./loss.sh
 ./evidence.sh
 ./monitoring.sh
+./events.sh
 ```
 
 Requires Docker. `run.sh` and `loss.sh` build the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, the router image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), bring the stack up, run their sequence, and tear everything down; `evidence.sh` reuses the images they built.
