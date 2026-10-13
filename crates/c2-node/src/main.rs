@@ -12,11 +12,13 @@ use mqp2p::{Peer, PeerConfig};
 use sha2::{Digest, Sha256};
 use stitch_p2p::{PeerId, Store, Swarm, SyncNode};
 use tokio::net::TcpStream;
+use tokio::sync::watch;
 use tokio::time::{sleep, timeout};
 
 #[cfg(target_os = "linux")]
 mod gnss;
 mod lora;
+mod telemetry;
 
 const RETRY: Duration = Duration::from_secs(1);
 const BROKER_RETRY_MAX: Duration = Duration::from_secs(60);
@@ -165,9 +167,14 @@ struct MeshSettings {
     lease_secs: u64,
 }
 
-async fn join_mesh(settings: MeshSettings, node: SyncNode) -> Swarm {
-    let peer = connect_and_register(&settings).await;
-    Swarm::spawn_with_discovery_interval(Arc::new(peer), node, settings.pull, settings.discovery)
+async fn join_mesh(
+    settings: MeshSettings,
+    node: SyncNode,
+    joined: watch::Sender<Option<Arc<Peer>>>,
+) -> Swarm {
+    let peer = Arc::new(connect_and_register(&settings).await);
+    joined.send_replace(Some(Arc::clone(&peer)));
+    Swarm::spawn_with_discovery_interval(peer, node, settings.pull, settings.discovery)
 }
 
 async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
@@ -200,12 +207,9 @@ async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
     }
 }
 
-fn picture_digest(entries: &BTreeMap<&String, &C2Message>) -> Result<String> {
+fn picture_digest(entries: &BTreeMap<&String, &C2Message>) -> Result<[u8; 4]> {
     let digest = Sha256::digest(serde_json::to_vec(entries)?);
-    Ok(digest[..4]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok([digest[0], digest[1], digest[2], digest[3]])
 }
 
 async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
@@ -216,8 +220,12 @@ async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
                 let ids: Vec<&str> = entries.keys().map(|id| id.as_str()).collect();
                 match picture_digest(&entries) {
                     Ok(digest) => println!(
-                        "PICTURE name={name} count={} digest={digest} ids={}",
+                        "PICTURE name={name} count={} digest={} ids={}",
                         ids.len(),
+                        digest
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>(),
                         ids.join(",")
                     ),
                     Err(error) => eprintln!("PICTURE name={name} digest-error={error}"),
@@ -254,6 +262,26 @@ async fn main() -> Result<()> {
         Ok(dir) => Store::open(node_identity(&name), &dir)?,
         Err(_) => Store::new(node_identity(&name)),
     });
+
+    let (joined, peer_handle) = watch::channel(None);
+    let telemetry = telemetry::Telemetry::from_env(&name)?;
+    if let Some(telemetry) = &telemetry {
+        println!(
+            "TELEMETRY name={name} otlp interval_ms={}",
+            telemetry.interval().as_millis()
+        );
+        tasks.push(tokio::spawn(telemetry::run_mutations(
+            store.subscribe().await,
+            telemetry.metrics(),
+        )));
+        tasks.push(tokio::spawn(telemetry::run_sampler(
+            Arc::clone(&store),
+            peer_handle,
+            name.clone(),
+            telemetry.metrics(),
+            telemetry.interval(),
+        )));
+    }
 
     if let Some(settings) = lora_settings()? {
         tasks.push(tokio::spawn(lora::run(
@@ -293,6 +321,7 @@ async fn main() -> Result<()> {
             lease_secs: env_parse("C2_LEASE_SECS", "6")?,
         },
         store.node().clone(),
+        joined,
     ));
 
     if let Ok(inbox) = env_req("C2_INBOX") {
@@ -317,6 +346,9 @@ async fn main() -> Result<()> {
     mesh.abort();
     if let Ok(swarm) = mesh.await {
         swarm.abort();
+    }
+    if let Some(telemetry) = telemetry {
+        telemetry.shutdown()?;
     }
     Ok(())
 }

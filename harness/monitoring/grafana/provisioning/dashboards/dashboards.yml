@@ -1,0 +1,7 @@
+apiVersion: 1
+
+providers:
+  - name: c2-fusion
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
