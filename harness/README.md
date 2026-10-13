@@ -113,12 +113,25 @@ lease  loss  from_edge           to_edge             packets      avg_bytes_pkt 
 
 Every contact converged within 4.6 seconds, with and without loss. A new write is pushed to connected peers immediately, so the pull interval governs catch-up after a partition rather than delivery latency. Without loss the 90-second lease lowers the traffic on the link from 70 to 113 packets per 30 seconds to 53 to 68; the rest is likely broker keepalives and the remaining sync exchanges, not yet broken down. With so few packets per window, the measured loss scatters widely around the configured 15 percent.
 
+## Monitoring
+
+`./monitoring.sh` adds the OpenTelemetry Collector, Prometheus and Grafana (the `monitoring` Compose profile), turns on each node's OTLP exporter, and runs a partition and recovery, printing from Prometheus at each stage. The collector sits on both networks, so edge's telemetry does not cross the router and a partitioned edge stays visible. Run on 2026-10-12 with a 5 s export interval:
+
+| Stage | Live peers (edge / hq / relay) | Distinct pictures | Replication lag |
+|---|---|---|---|
+| Converged | 2 / 2 / 2 | 1 | 0 for every node and origin |
+| Edge partitioned, C-2 ingested at edge | 0 / 1 / 1 | 2 | hq and relay 1 write behind on origin edge |
+| Healed | 2 / 2 / 2 | 1 | 0 for every node and origin |
+
+The metrics, the queries behind these columns and the ingest paths are in [../docs/monitoring.md](../docs/monitoring.md).
+
 ## Run it
 
 ```
 ./run.sh
 ./loss.sh
 ./evidence.sh
+./monitoring.sh
 ```
 
 Requires Docker. `run.sh` and `loss.sh` build the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, the router image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), bring the stack up, run their sequence, and tear everything down; `evidence.sh` reuses the images they built.

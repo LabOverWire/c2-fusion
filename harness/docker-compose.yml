@@ -28,6 +28,8 @@ services:
     entrypoint: ["sh", "-c", "ip route add 10.231.0.0/24 via 10.231.1.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: edge
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${C2_OTLP_EDGE:-}"
+      OTEL_METRIC_EXPORT_INTERVAL: "${C2_OTLP_INTERVAL_MS:-5000}"
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
@@ -56,6 +58,8 @@ services:
     entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: relay
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${C2_OTLP_CORE:-}"
+      OTEL_METRIC_EXPORT_INTERVAL: "${C2_OTLP_INTERVAL_MS:-5000}"
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
@@ -81,6 +85,8 @@ services:
     entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: hq
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${C2_OTLP_CORE:-}"
+      OTEL_METRIC_EXPORT_INTERVAL: "${C2_OTLP_INTERVAL_MS:-5000}"
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
       C2_BROKER: 10.231.0.2:1883
       C2_BROKER_USER: c2
@@ -97,6 +103,49 @@ services:
     networks:
       c2net:
         ipv4_address: 10.231.0.12
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    container_name: c2-otel-collector
+    profiles: [monitoring]
+    volumes:
+      - ./monitoring/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.20
+      c2edge:
+        ipv4_address: 10.231.1.20
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: c2-prometheus
+    profiles: [monitoring]
+    depends_on: [otel-collector]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.21
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: c2-grafana
+    profiles: [monitoring]
+    depends_on: [prometheus]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/c2-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      c2net:
+        ipv4_address: 10.231.0.22
 
 networks:
   c2net:

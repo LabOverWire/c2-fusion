@@ -111,6 +111,10 @@ The nodes here use a six-second demo lease and renew it on a heartbeat. While a 
 
 The broker also sweeps expired records on its own timer (roughly every 60 seconds), which is coarser than the lease, so the authoritative fast signal is the client-side check that `_expires_at` is still in the future.
 
+## Monitoring (optional)
+
+`harness/monitoring.sh` runs the same partition and recovery with the OpenTelemetry exporter on, through a collector into Prometheus and Grafana, and prints peer counts, distinct pictures and replication lag from Prometheus at each stage. Run it with `KEEP=1` to leave the stack up and open Grafana at http://127.0.0.1:3000 (the home dashboard is the example `c2-fusion exchange` dashboard). The interface, every metric, and the Prometheus and Splunk ingest paths are documented in [monitoring.md](monitoring.md).
+
 ## Bearer profiles (optional)
 
 `harness/netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies an emulated tactical-bearer profile (rate, delay and loss) with `tc`/`netem` to one interface. In the harness the edge link runs through the `c2-router` container, so a profile belongs on both of the router's interfaces (it needs `NET_ADMIN`; run it inside the container, not on the host). The values are placeholders pending real HF/UHF/SATCOM figures; treat them as illustrative. Loss is only trustworthy with UDP segmentation offload disabled in the nodes, so for measurements use `harness/loss.sh`, which disables offload and takes a profile through `LOSS_PROFILE` (see `harness/README.md`).
@@ -127,9 +131,11 @@ The broker also sweeps expired records on its own timer (roughly every 60 second
 The scripts tear the stack down automatically. To clean up manually:
 
 ```
-docker compose -f harness/docker-compose.yml down -v --remove-orphans
+COMPOSE_PROFILES=monitoring docker compose -f harness/docker-compose.yml down -v --remove-orphans
 docker image prune
 ```
+
+The `COMPOSE_PROFILES=monitoring` prefix also removes the collector, Prometheus and Grafana containers if `monitoring.sh` left them running; it is harmless otherwise.
 
 ## Substrate repositories
 
