@@ -40,7 +40,7 @@ Once it has a fix and its clock is disciplined, the node also shares its own pos
 Before starting the node, `run.sh` turns off what a field node does not use:
 
 - Ethernet is brought down unless `C2_ETHERNET=on`. With no cable attached, the Ethernet driver keeps retrying link detection in a kernel worker; on node-b this held the CPU at about 60% busy, and taking `eth0` down brought both boards to about 3%.
-- The stock image's status LED loop (`/mnt/system/blink.sh`, started by `S99user`, toggling every 0.5 s) is stopped and the LED left off.
+- The status LED is left off. `install.sh` renames the stock image's LED loop (`/mnt/system/blink.sh`, toggling every 0.5 s) to `blink.sh.orig` so `S99user` no longer starts it. `S99user` runs the LED loop in the same background shells that load the Wi-Fi driver (`duo-init.sh`) and set up the USB link (`usb.sh`), so killing it at node start would also kill those on a cold boot and leave the board with no `wlan0` and no USB network.
 - `bluetoothd` is stopped.
 - `C2_WIFI=off` also stops `wpa_supplicant` and brings `wlan0` down, for running on battery out of Wi-Fi range. Without Wi-Fi the board is reachable only over the USB link, so it stays on by default.
 

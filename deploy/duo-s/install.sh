@@ -23,6 +23,7 @@ if [ ! -f "$binary" ]; then
 fi
 
 ssh -o "$known_hosts" "$target" 'mkdir -p /opt/c2/inbox /etc/default'
+ssh -o "$known_hosts" "$target" '[ ! -f /mnt/system/blink.sh ] || mv /mnt/system/blink.sh /mnt/system/blink.sh.orig'
 ssh -o "$known_hosts" "$target" 'cat > /opt/c2/c2-node.new && chmod 755 /opt/c2/c2-node.new && mv /opt/c2/c2-node.new /opt/c2/c2-node' < "$binary"
 ssh -o "$known_hosts" "$target" 'cat > /opt/c2/run.sh && chmod 755 /opt/c2/run.sh' < "$here/run.sh"
 {

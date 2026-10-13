@@ -23,9 +23,6 @@ if [ "${C2_WIFI:-on}" = off ]; then
     ip link set wlan0 down
 fi
 
-for pid in $(pidof S99user); do
-    kill "$pid"
-done
 [ -d /sys/class/gpio/gpio509 ] && echo 0 > /sys/class/gpio/gpio509/value
 
 [ -x /etc/init.d/S40bluetoothd ] && /etc/init.d/S40bluetoothd stop >/dev/null 2>&1
