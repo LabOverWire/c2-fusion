@@ -11,10 +11,11 @@ use c2_model::C2Message;
 use mqp2p::{Peer, PeerConfig};
 use sha2::{Digest, Sha256};
 use stitch_p2p::{PeerId, Store, Swarm, SyncNode};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::time::{sleep, timeout};
 
+mod events;
 #[cfg(target_os = "linux")]
 mod gnss;
 mod lora;
@@ -280,6 +281,24 @@ async fn main() -> Result<()> {
             name.clone(),
             telemetry.metrics(),
             telemetry.interval(),
+        )));
+    }
+
+    if let Some(address) = std::env::var("C2_EVENTS_LISTEN")
+        .ok()
+        .filter(|address| !address.is_empty())
+    {
+        let listener = TcpListener::bind(&address).await?;
+        println!(
+            "EVENTS name={name} listen={} schema={}",
+            listener.local_addr()?,
+            events::SCHEMA
+        );
+        tasks.push(tokio::spawn(events::serve(
+            listener,
+            Arc::clone(&store),
+            name.clone(),
+            node_identity(&name),
         )));
     }
 

@@ -28,6 +28,7 @@ services:
     entrypoint: ["sh", "-c", "ip route add 10.231.0.0/24 via 10.231.1.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: edge
+      C2_EVENTS_LISTEN: "${C2_EVENTS_LISTEN:-}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${C2_OTLP_EDGE:-}"
       OTEL_METRIC_EXPORT_INTERVAL: "${C2_OTLP_INTERVAL_MS:-5000}"
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
@@ -46,6 +47,8 @@ services:
     volumes:
       - ./messages:/messages:ro
       - ./run/inbox/edge:/inbox
+    ports:
+      - "127.0.0.1:7601:7600"
     networks:
       c2edge:
         ipv4_address: 10.231.1.10
@@ -85,6 +88,7 @@ services:
     entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/c2-node"]
     environment:
       C2_NAME: hq
+      C2_EVENTS_LISTEN: "${C2_EVENTS_LISTEN:-}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${C2_OTLP_CORE:-}"
       OTEL_METRIC_EXPORT_INTERVAL: "${C2_OTLP_INTERVAL_MS:-5000}"
       C2_QUIC_SEGMENTATION_OFFLOAD: "${C2_QUIC_SEGMENTATION_OFFLOAD:-true}"
@@ -100,6 +104,8 @@ services:
       C2_LEASE_SECS: "${C2_LEASE_SECS:-6}"
     volumes:
       - ./messages:/messages:ro
+    ports:
+      - "127.0.0.1:7600:7600"
     networks:
       c2net:
         ipv4_address: 10.231.0.12
