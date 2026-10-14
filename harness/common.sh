@@ -42,6 +42,11 @@ heal_edge() { docker exec c2-router ip link set "$(router_iface "$EDGE_SIDE")" u
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
+inject_edge() {
+    cp "$HARNESS_DIR/messages/inject.json" "$HARNESS_DIR/run/inbox/edge/inject.tmp"
+    mv "$HARNESS_DIR/run/inbox/edge/inject.tmp" "$HARNESS_DIR/run/inbox/edge/inject.json"
+}
+
 wait_for_count() {
     local container="$1" want="$2" timeout="$3" deadline
     deadline=$(( $(date +%s) + timeout ))

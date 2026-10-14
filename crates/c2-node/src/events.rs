@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use c2_exchange::ENTITY;
 use c2_model::C2Message;
@@ -10,11 +10,14 @@ use stitch_p2p::{MutationEvent, Op, PeerId, Store, WriteOrigin};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Semaphore};
+use tokio::time::{sleep, timeout};
 
 use crate::Result;
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CONSUMERS: usize = 8;
+const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +79,11 @@ enum Line<'a> {
     Resync {
         missed: u64,
     },
+    Unreadable {
+        id: &'a str,
+        origin: Origin,
+        error: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -89,27 +97,37 @@ fn now() -> String {
     humantime::format_rfc3339_millis(SystemTime::now()).to_string()
 }
 
-fn record(data: &[u8]) -> Result<Box<RawValue>> {
+fn record(data: &[u8]) -> serde_json::Result<Box<RawValue>> {
     let message: C2Message = serde_json::from_slice(data)?;
-    Ok(serde_json::value::to_raw_value(&message)?)
+    serde_json::value::to_raw_value(&message)
 }
 
-fn change(event: &MutationEvent) -> Result<Option<Line<'_>>> {
+fn change(event: &MutationEvent) -> Option<Line<'_>> {
     if event.entity != ENTITY {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(Line::Change {
-        op: event.op.into(),
-        id: &event.id,
-        origin: event.origin.into(),
-        at: now(),
-        record: event.data.as_deref().map(record).transpose()?,
-    }))
+    let id = &event.id;
+    let origin = event.origin.into();
+    Some(match event.data.as_deref().map(record).transpose() {
+        Ok(record) => Line::Change {
+            op: event.op.into(),
+            id,
+            origin,
+            at: now(),
+            record,
+        },
+        Err(error) => Line::Unreadable {
+            id,
+            origin,
+            error: error.to_string(),
+        },
+    })
 }
 
 struct Consumer {
     writer: BufWriter<TcpStream>,
     seq: u64,
+    write_timeout: Duration,
 }
 
 impl Consumer {
@@ -119,8 +137,13 @@ impl Consumer {
             line,
         })?;
         bytes.push(b'\n');
-        self.writer.write_all(&bytes).await?;
+        timeout(self.write_timeout, self.writer.write_all(&bytes)).await??;
         self.seq += 1;
+        Ok(())
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        timeout(self.write_timeout, self.writer.flush()).await??;
         Ok(())
     }
 
@@ -133,20 +156,22 @@ impl Consumer {
             } else {
                 Origin::Remote
             };
-            self.send(Line::Snapshot {
-                id,
-                origin,
-                record: record(data)?,
-            })
-            .await?;
+            let line = match record(data) {
+                Ok(record) => Line::Snapshot { id, origin, record },
+                Err(error) => Line::Unreadable {
+                    id,
+                    origin,
+                    error: error.to_string(),
+                },
+            };
+            self.send(line).await?;
         }
         self.send(Line::Ready {
             count: entries.len(),
             at: now(),
         })
         .await?;
-        self.writer.flush().await?;
-        Ok(())
+        self.flush().await
     }
 
     async fn run(
@@ -165,12 +190,13 @@ impl Consumer {
         loop {
             match events.recv().await {
                 Ok(event) => {
-                    if let Some(line) = change(&event)? {
+                    if let Some(line) = change(&event) {
                         self.send(line).await?;
-                        self.writer.flush().await?;
+                        self.flush().await?;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    events = store.subscribe().await;
                     self.send(Line::Resync { missed }).await?;
                     self.snapshot(store, own).await?;
                 }
@@ -186,12 +212,14 @@ async fn serve_consumer(
     store: Arc<Store>,
     name: Arc<str>,
     own: PeerId,
+    write_timeout: Duration,
 ) {
     println!("EVENTS name={name} consumer={address} connected");
     let events = store.subscribe().await;
     let consumer = Consumer {
         writer: BufWriter::new(socket),
         seq: 0,
+        write_timeout,
     };
     match consumer.run(events, &store, &name, own).await {
         Ok(()) => println!("EVENTS name={name} consumer={address} closed"),
@@ -199,7 +227,13 @@ async fn serve_consumer(
     }
 }
 
-pub async fn serve(listener: TcpListener, store: Arc<Store>, name: String, own: PeerId) {
+pub async fn serve(
+    listener: TcpListener,
+    store: Arc<Store>,
+    name: String,
+    own: PeerId,
+    write_timeout: Duration,
+) {
     let name: Arc<str> = name.into();
     let slots = Arc::new(Semaphore::new(MAX_CONSUMERS));
     loop {
@@ -207,6 +241,7 @@ pub async fn serve(listener: TcpListener, store: Arc<Store>, name: String, own: 
             Ok(accepted) => accepted,
             Err(error) => {
                 eprintln!("EVENTS name={name} accept-error={error}");
+                sleep(ACCEPT_RETRY).await;
                 continue;
             }
         };
@@ -219,7 +254,7 @@ pub async fn serve(listener: TcpListener, store: Arc<Store>, name: String, own: 
         let store = Arc::clone(&store);
         let name = Arc::clone(&name);
         tokio::spawn(async move {
-            serve_consumer(socket, address, store, name, own).await;
+            serve_consumer(socket, address, store, name, own, write_timeout).await;
             drop(slot);
         });
     }
@@ -240,12 +275,47 @@ mod tests {
         serde_json::from_value(value).expect("fixture is a C2 message")
     }
 
-    async fn connect(store: Arc<Store>, own: PeerId) -> Lines<BufReader<TcpStream>> {
+    async fn listen(store: Arc<Store>, own: PeerId, write_timeout: Duration) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let address = listener.local_addr().expect("address");
-        tokio::spawn(serve(listener, store, "test".to_string(), own));
+        tokio::spawn(serve(
+            listener,
+            store,
+            "test".to_string(),
+            own,
+            write_timeout,
+        ));
+        address
+    }
+
+    async fn open(address: SocketAddr) -> Lines<BufReader<TcpStream>> {
         let stream = TcpStream::connect(address).await.expect("connect");
         BufReader::new(stream).lines()
+    }
+
+    async fn connect(store: Arc<Store>, own: PeerId) -> Lines<BufReader<TcpStream>> {
+        open(listen(store, own, WRITE_TIMEOUT).await).await
+    }
+
+    async fn drain(lines: &mut Lines<BufReader<TcpStream>>, quiet: Duration) -> Vec<Value> {
+        let mut values = Vec::new();
+        while let Ok(Ok(Some(line))) = timeout(quiet, lines.next_line()).await {
+            values.push(serde_json::from_str(&line).expect("json line"));
+        }
+        values
+    }
+
+    fn description(value: &Value) -> u32 {
+        value["record"]["description"]
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .expect("numbered description")
+    }
+
+    fn described(id: &str, text: &str) -> C2Message {
+        let mut value = serde_json::to_value(contact(id)).expect("model json");
+        value["description"] = Value::from(text);
+        serde_json::from_value(value).expect("fixture is a C2 message")
     }
 
     async fn next(lines: &mut Lines<BufReader<TcpStream>>) -> (String, Value) {
@@ -303,6 +373,129 @@ mod tests {
             data: Some(b"{}".to_vec()),
             origin: WriteOrigin::Remote,
         };
-        assert!(change(&event).expect("no error").is_none());
+        assert!(change(&event).is_none());
+    }
+
+    #[tokio::test]
+    async fn unreadable_records_are_reported_and_the_stream_continues() {
+        let own = [1; 32];
+        let store = Arc::new(Store::new(own));
+        ingest(&store, &contact("C-1")).await.expect("ingest");
+        store
+            .create(ENTITY, "BAD", serde_json::json!({"foo": 1}))
+            .await
+            .expect("create");
+        let mut lines = connect(Arc::clone(&store), own).await;
+
+        let kinds: Vec<(String, String)> = {
+            let mut kinds = Vec::new();
+            for _ in 0..4 {
+                let (_, value) = next(&mut lines).await;
+                kinds.push((
+                    value["kind"].as_str().unwrap_or_default().to_string(),
+                    value["id"].as_str().unwrap_or_default().to_string(),
+                ));
+            }
+            kinds
+        };
+        assert_eq!(
+            kinds,
+            [
+                ("hello".to_string(), String::new()),
+                ("unreadable".to_string(), "BAD".to_string()),
+                ("snapshot".to_string(), "C-1".to_string()),
+                ("ready".to_string(), String::new()),
+            ]
+        );
+
+        store
+            .node()
+            .local_write(Op::Update, ENTITY, "C-1", b"not json".to_vec())
+            .await;
+        let (_, unreadable) = next(&mut lines).await;
+        assert_eq!(unreadable["kind"], "unreadable");
+        assert_eq!(unreadable["id"], "C-1");
+        assert_eq!(unreadable["origin"], "local");
+
+        ingest(&store, &contact("C-2")).await.expect("ingest");
+        let (_, inserted) = next(&mut lines).await;
+        assert_eq!(inserted["kind"], "change");
+        assert_eq!(inserted["id"], "C-2");
+        assert_eq!(inserted["seq"], 5);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn after_a_resync_no_change_is_older_than_the_snapshot() {
+        let own = [1; 32];
+        let store = Arc::new(Store::new(own));
+        let mut lines = connect(Arc::clone(&store), own).await;
+        next(&mut lines).await;
+        next(&mut lines).await;
+        let big = "b".repeat(256 * 1024);
+        for i in 0..100 {
+            ingest(&store, &described(&format!("BIG-{i}"), &big))
+                .await
+                .expect("ingest");
+        }
+        for version in 0..1100 {
+            ingest(&store, &described("X", &version.to_string()))
+                .await
+                .expect("ingest");
+        }
+        let lines: Vec<Value> = drain(&mut lines, Duration::from_secs(3))
+            .await
+            .into_iter()
+            .filter(|value| value["id"] == "X" || value["kind"] != "change")
+            .filter(|value| value["id"] == "X" || value["kind"] != "snapshot")
+            .collect();
+        let resync = lines
+            .iter()
+            .position(|value| value["kind"] == "resync")
+            .expect("consumer fell behind");
+        let after = &lines[resync..];
+        let snapshot = description(
+            after
+                .iter()
+                .find(|value| value["kind"] == "snapshot")
+                .expect("X in the new snapshot"),
+        );
+        assert_eq!(snapshot, 1099);
+        let older: Vec<u32> = after
+            .iter()
+            .filter(|value| value["kind"] == "change")
+            .map(description)
+            .filter(|version| *version <= snapshot)
+            .collect();
+        assert!(
+            older.is_empty(),
+            "{} changes up to {:?} after snapshot {snapshot}",
+            older.len(),
+            older.last()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn consumers_that_stop_reading_give_up_their_slots() {
+        let own = [1; 32];
+        let store = Arc::new(Store::new(own));
+        let address = listen(Arc::clone(&store), own, Duration::from_millis(300)).await;
+        let mut stuck = Vec::new();
+        for _ in 0..MAX_CONSUMERS {
+            stuck.push(TcpStream::connect(address).await.expect("connect"));
+        }
+        sleep(Duration::from_millis(200)).await;
+        let big = "b".repeat(256 * 1024);
+        for i in 0..60 {
+            ingest(&store, &described(&format!("BIG-{i}"), &big))
+                .await
+                .expect("ingest");
+        }
+        sleep(Duration::from_secs(1)).await;
+        let mut lines = open(address).await;
+        let (_, hello) = timeout(Duration::from_secs(2), next(&mut lines))
+            .await
+            .expect("a slot was freed");
+        assert_eq!(hello["kind"], "hello");
+        drop(stuck);
     }
 }

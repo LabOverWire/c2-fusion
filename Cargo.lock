@@ -348,6 +348,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "stitch-p2p",
+ "tempfile",
  "tokio",
  "tokio-serial",
  "tracing",

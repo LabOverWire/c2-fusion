@@ -1,11 +1,3 @@
-//! Full stack over a real QUIC connection: two Stores exchange C2 messages via
-//! the sync session running over mqp2p's fingerprint-pinned QUIC, then converge.
-//!
-//! This uses direct QUIC dial (`QuicEndpoint::connect` to a known address), not
-//! the `Peer`/`Swarm` discovery path. Direct dial has no STUN and no UDP
-//! hole-punching, which is what makes it work inside a container bridge network
-//! where hole-punching fails. See the DDIL harness transport notes.
-
 use std::net::UdpSocket;
 use std::time::Duration;
 
@@ -81,8 +73,6 @@ async fn two_nodes_converge_over_real_quic() {
     ingest(&edge, &contact("C-1")).await.unwrap();
     ingest(&hq, &sitrep("S-1")).await.unwrap();
 
-    // Acceptor (HQ): accept the connection verifying the edge fingerprint, then
-    // the bidi stream the edge opens when it sends its first sync message.
     let hq_state = hq.node().state();
     let hq_rx = hq.node().register_session();
     let acceptor = tokio::spawn(async move {
@@ -91,7 +81,6 @@ async fn two_nodes_converge_over_real_quic() {
         let _ = session::run(hq_state, recv, send, hq_rx, PULL).await;
     });
 
-    // Connector (edge): dial HQ directly by address, verifying its fingerprint.
     let conn = ep_a.connect(addr_b, &fp_b).await.unwrap();
     let (send, recv) = conn.open_bi().await.unwrap();
     let edge_state = edge.node().state();
@@ -101,8 +90,8 @@ async fn two_nodes_converge_over_real_quic() {
     });
 
     let converged = wait_until(Duration::from_secs(10), || async {
-        let a = picture(&edge).await.unwrap();
-        let b = picture(&hq).await.unwrap();
+        let a = picture(&edge).await.messages;
+        let b = picture(&hq).await.messages;
         a == b && a.len() == 2
     })
     .await;
@@ -111,7 +100,7 @@ async fn two_nodes_converge_over_real_quic() {
     connector.abort();
 
     assert!(converged, "nodes did not converge over QUIC");
-    let pic = picture(&hq).await.unwrap();
+    let pic = picture(&hq).await.messages;
     assert_eq!(pic.get("C-1"), Some(&contact("C-1")));
     assert_eq!(pic.get("S-1"), Some(&sitrep("S-1")));
 }

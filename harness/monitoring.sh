@@ -43,7 +43,7 @@ snapshot "converged"
 
 log "partition edge from the network"
 partition_edge
-cp "$HARNESS_DIR/messages/inject.json" "$HARNESS_DIR/run/inbox/edge/inject.json"
+inject_edge
 wait_for_count c2-edge 4 30 && echo "edge ingested C-2 while isolated"
 sleep "$HOLD"
 snapshot "edge partitioned, C-2 only on edge"

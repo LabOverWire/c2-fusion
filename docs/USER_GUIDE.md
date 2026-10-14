@@ -120,6 +120,8 @@ The broker also sweeps expired records on its own timer (roughly every 60 second
 
 `harness/events.sh` runs the partition and recovery with the event stream on at edge and hq and the reference consumer (`examples/events_consumer.py`) attached to each, then checks that each consumer's copy of the picture has the same digest as its node. To watch a stream by hand, set `C2_EVENTS_LISTEN` on a node and run `python3 examples/events_consumer.py --port <port>`. The line format and its guarantees are in [events.md](events.md).
 
+`harness/restart.sh` stops edge with `docker stop` and starts it again on the same store, then checks that it shut down on SIGTERM, came back with its picture, and that a write made after the restart reaches every node. Every node needs `C2_STORE_DIR`: it refuses to start without one, because a node restarted with an empty store reuses write sequence numbers its peers already hold, and they drop its new writes.
+
 ## Bearer profiles (optional)
 
 `harness/netem-profiles.sh <interface> <hf|uhf|satcom|clear>` applies an emulated tactical-bearer profile (rate, delay and loss) with `tc`/`netem` to one interface. In the harness the edge link runs through the `c2-router` container, so a profile belongs on both of the router's interfaces (it needs `NET_ADMIN`; run it inside the container, not on the host). The values are placeholders pending real HF/UHF/SATCOM figures; treat them as illustrative. Loss is only trustworthy with UDP segmentation offload disabled in the nodes, so for measurements use `harness/loss.sh`, which disables offload and takes a profile through `LOSS_PROFILE` (see `harness/README.md`).

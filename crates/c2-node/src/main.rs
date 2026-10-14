@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use c2_codec::Registry;
-use c2_exchange::{ingest_wire_with, picture};
+use c2_exchange::{ingest_wire_with, picture, Picture};
 use c2_lora::{Config, Modulation};
 use c2_model::C2Message;
 use mqp2p::{Peer, PeerConfig};
@@ -13,6 +15,7 @@ use sha2::{Digest, Sha256};
 use stitch_p2p::{PeerId, Store, Swarm, SyncNode};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 
 mod events;
@@ -157,6 +160,14 @@ fn node_identity(name: &str) -> PeerId {
     Sha256::digest(name.as_bytes()).into()
 }
 
+fn open_store(name: &str, dir: Option<&str>) -> Result<Store> {
+    let dir = dir.ok_or(
+        "missing required env var C2_STORE_DIR: a node restarted without its store reuses write sequence numbers its peers already hold, and they drop its new writes",
+    )?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("C2_STORE_DIR={dir}: {e}"))?;
+    Store::open(node_identity(name), dir).map_err(|e| format!("C2_STORE_DIR={dir}: {e}").into())
+}
+
 struct MeshSettings {
     name: String,
     broker: String,
@@ -178,32 +189,59 @@ async fn join_mesh(
     Swarm::spawn_with_discovery_interval(peer, node, settings.pull, settings.discovery)
 }
 
+async fn take_inbox_file(store: &Store, registry: &Registry, name: &str, fmt: &str, path: &Path) {
+    let file = path.display();
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("INBOX name={name} file={file} read-error={e}");
+            return;
+        }
+    };
+    let extension = match ingest_wire_with(store, registry, fmt, &bytes).await {
+        Ok(msg) => {
+            println!("INBOX name={name} ingested id={}", msg.id());
+            "done"
+        }
+        Err(e) => {
+            eprintln!("INBOX name={name} file={file} rejected error={e}");
+            "rejected"
+        }
+    };
+    if let Err(e) = tokio::fs::rename(path, path.with_extension(extension)).await {
+        eprintln!("INBOX name={name} file={file} rename-error={e}");
+    }
+}
+
+async fn scan_inbox(store: &Store, registry: &Registry, name: &str, dir: &str, fmt: &str) {
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("INBOX name={name} dir={dir} error={e}");
+            return;
+        }
+    };
+    loop {
+        match entries.next_entry().await {
+            Ok(Some(entry)) => {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    take_inbox_file(store, registry, name, fmt, &path).await;
+                }
+            }
+            Ok(None) => return,
+            Err(e) => {
+                eprintln!("INBOX name={name} dir={dir} scan-error={e}");
+                return;
+            }
+        }
+    }
+}
+
 async fn run_inbox(store: Arc<Store>, name: String, dir: String, fmt: String) {
     let registry = Registry::with_defaults();
     loop {
-        match tokio::fs::read_dir(&dir).await {
-            Ok(mut rd) => {
-                while let Ok(Some(entry)) = rd.next_entry().await {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                        continue;
-                    }
-                    match tokio::fs::read(&path).await {
-                        Ok(bytes) => {
-                            match ingest_wire_with(&store, &registry, &fmt, &bytes).await {
-                                Ok(msg) => println!("INBOX name={name} ingested id={}", msg.id()),
-                                Err(e) => eprintln!("INBOX name={name} error={e}"),
-                            }
-                        }
-                        Err(e) => eprintln!("INBOX name={name} read-error={e}"),
-                    }
-                    if let Err(e) = tokio::fs::rename(&path, path.with_extension("done")).await {
-                        eprintln!("INBOX name={name} rename-error={e}");
-                    }
-                }
-            }
-            Err(e) => eprintln!("INBOX name={name} dir={dir} error={e}"),
-        }
+        scan_inbox(&store, &registry, &name, &dir, &fmt).await;
         sleep(RETRY).await;
     }
 }
@@ -213,28 +251,74 @@ fn picture_digest(entries: &BTreeMap<&String, &C2Message>) -> Result<[u8; 4]> {
     Ok([digest[0], digest[1], digest[2], digest[3]])
 }
 
+fn picture_line(name: &str, picture: &Picture) -> Result<String> {
+    let entries: BTreeMap<&String, &C2Message> = picture.messages.iter().collect();
+    let digest: String = picture_digest(&entries)?
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let ids: Vec<&str> = entries.keys().map(|id| id.as_str()).collect();
+    let unreadable = match picture.unreadable.is_empty() {
+        true => String::new(),
+        false => format!(
+            " unreadable={}",
+            picture
+                .unreadable
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    Ok(format!(
+        "PICTURE name={name} count={} digest={digest} ids={}{unreadable}",
+        ids.len(),
+        ids.join(",")
+    ))
+}
+
 async fn run_printer(store: Arc<Store>, name: String, interval: Duration) {
     loop {
-        match picture(&store).await {
-            Ok(pic) => {
-                let entries: BTreeMap<&String, &C2Message> = pic.iter().collect();
-                let ids: Vec<&str> = entries.keys().map(|id| id.as_str()).collect();
-                match picture_digest(&entries) {
-                    Ok(digest) => println!(
-                        "PICTURE name={name} count={} digest={} ids={}",
-                        ids.len(),
-                        digest
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect::<String>(),
-                        ids.join(",")
-                    ),
-                    Err(error) => eprintln!("PICTURE name={name} digest-error={error}"),
-                }
-            }
-            Err(error) => eprintln!("PICTURE name={name} error={error}"),
+        match picture_line(&name, &picture(&store).await) {
+            Ok(line) => println!("{line}"),
+            Err(error) => eprintln!("PICTURE name={name} digest-error={error}"),
         }
         sleep(interval).await;
+    }
+}
+
+#[cfg(unix)]
+async fn terminated() -> std::io::Result<()> {
+    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?
+        .recv()
+        .await;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn terminated() -> std::io::Result<()> {
+    std::future::pending().await
+}
+
+fn supervise(
+    tasks: &mut JoinSet<&'static str>,
+    task: &'static str,
+    work: impl Future<Output = ()> + Send + 'static,
+) {
+    tasks.spawn(async move {
+        work.await;
+        task
+    });
+}
+
+async fn stop_reason(tasks: &mut JoinSet<&'static str>) -> Result<&'static str> {
+    tokio::select! {
+        interrupted = tokio::signal::ctrl_c() => interrupted.map(|()| "SIGINT").map_err(Into::into),
+        terminated = terminated() => terminated.map(|()| "SIGTERM").map_err(Into::into),
+        Some(ended) = tasks.join_next() => match ended {
+            Ok(task) => Err(format!("{task} task ended").into()),
+            Err(error) => Err(format!("task failed: {error}").into()),
+        },
     }
 }
 
@@ -258,11 +342,11 @@ async fn main() -> Result<()> {
         (Ok(user), Ok(pass)) => Some((user, pass)),
         _ => None,
     };
-    let mut tasks = Vec::new();
-    let store = Arc::new(match std::env::var("C2_STORE_DIR") {
-        Ok(dir) => Store::open(node_identity(&name), &dir)?,
-        Err(_) => Store::new(node_identity(&name)),
-    });
+    let mut tasks = JoinSet::new();
+    let store = Arc::new(open_store(
+        &name,
+        std::env::var("C2_STORE_DIR").ok().as_deref(),
+    )?);
 
     let (joined, peer_handle) = watch::channel(None);
     let telemetry = telemetry::Telemetry::from_env(&name)?;
@@ -271,17 +355,22 @@ async fn main() -> Result<()> {
             "TELEMETRY name={name} otlp interval_ms={}",
             telemetry.interval().as_millis()
         );
-        tasks.push(tokio::spawn(telemetry::run_mutations(
-            store.subscribe().await,
-            telemetry.metrics(),
-        )));
-        tasks.push(tokio::spawn(telemetry::run_sampler(
-            Arc::clone(&store),
-            peer_handle,
-            name.clone(),
-            telemetry.metrics(),
-            telemetry.interval(),
-        )));
+        supervise(
+            &mut tasks,
+            "telemetry mutations",
+            telemetry::run_mutations(store.subscribe().await, telemetry.metrics()),
+        );
+        supervise(
+            &mut tasks,
+            "telemetry sampler",
+            telemetry::run_sampler(
+                Arc::clone(&store),
+                peer_handle,
+                name.clone(),
+                telemetry.metrics(),
+                telemetry.interval(),
+            ),
+        );
     }
 
     if let Some(address) = std::env::var("C2_EVENTS_LISTEN")
@@ -294,35 +383,42 @@ async fn main() -> Result<()> {
             listener.local_addr()?,
             events::SCHEMA
         );
-        tasks.push(tokio::spawn(events::serve(
-            listener,
-            Arc::clone(&store),
-            name.clone(),
-            node_identity(&name),
-        )));
+        supervise(
+            &mut tasks,
+            "events",
+            events::serve(
+                listener,
+                Arc::clone(&store),
+                name.clone(),
+                node_identity(&name),
+                events::WRITE_TIMEOUT,
+            ),
+        );
     }
 
     if let Some(settings) = lora_settings()? {
-        tasks.push(tokio::spawn(lora::run(
-            settings,
-            store.node().clone(),
-            name.clone(),
-        )));
+        supervise(
+            &mut tasks,
+            "lora",
+            lora::run(settings, store.node().clone(), name.clone()),
+        );
     }
 
     #[cfg(target_os = "linux")]
     if let Some(settings) = gnss_settings()? {
-        tasks.push(tokio::spawn(gnss::run(
-            settings,
-            name.clone(),
-            Arc::clone(&store),
-        )));
+        supervise(
+            &mut tasks,
+            "gnss",
+            gnss::run(settings, name.clone(), Arc::clone(&store)),
+        );
     }
     #[cfg(not(target_os = "linux"))]
     reject_gnss(&name)?;
 
     if let (Ok(fmt), Ok(file)) = (env_req("C2_INGEST_FMT"), env_req("C2_INGEST_FILE")) {
-        let bytes = tokio::fs::read(&file).await?;
+        let bytes = tokio::fs::read(&file)
+            .await
+            .map_err(|e| format!("C2_INGEST_FILE={file}: {e}"))?;
         let registry = Registry::with_defaults();
         let msg = ingest_wire_with(&store, &registry, &fmt, &bytes).await?;
         println!("INGEST name={name} id={} fmt={fmt}", msg.id());
@@ -345,23 +441,24 @@ async fn main() -> Result<()> {
 
     if let Ok(inbox) = env_req("C2_INBOX") {
         let fmt = env_or("C2_INBOX_FMT", "c2-json");
-        tasks.push(tokio::spawn(run_inbox(
-            Arc::clone(&store),
-            name.clone(),
-            inbox,
-            fmt,
-        )));
+        supervise(
+            &mut tasks,
+            "inbox",
+            run_inbox(Arc::clone(&store), name.clone(), inbox, fmt),
+        );
     }
-    tasks.push(tokio::spawn(run_printer(
-        Arc::clone(&store),
-        name.clone(),
-        interval,
-    )));
+    supervise(
+        &mut tasks,
+        "printer",
+        run_printer(Arc::clone(&store), name.clone(), interval),
+    );
 
-    tokio::signal::ctrl_c().await?;
-    for t in tasks {
-        t.abort();
+    let stopped = stop_reason(&mut tasks).await;
+    match &stopped {
+        Ok(signal) => println!("STOP name={name} signal={signal}"),
+        Err(error) => eprintln!("STOP name={name} error={error}"),
     }
+    tasks.shutdown().await;
     mesh.abort();
     if let Ok(swarm) = mesh.await {
         swarm.abort();
@@ -369,5 +466,111 @@ async fn main() -> Result<()> {
     if let Some(telemetry) = telemetry {
         telemetry.shutdown()?;
     }
-    Ok(())
+    stopped.map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use c2_exchange::{ingest, ENTITY};
+    use c2_model::{ContactReport, Domain, FunctionalService};
+    use stitch_p2p::Op;
+
+    fn contact(id: &str) -> C2Message {
+        C2Message::ContactReport(ContactReport {
+            id: id.to_string(),
+            reporting_unit: "UAV-7".to_string(),
+            domain: Domain::Air,
+            service: FunctionalService::Intelligence,
+            observed_at: "2026-09-29T16:00:00Z".to_string(),
+            latitude: 49.3,
+            longitude: -123.1,
+            description: "test contact".to_string(),
+            label: None,
+        })
+    }
+
+    fn json(msg: &C2Message) -> Vec<u8> {
+        serde_json::to_vec(msg).expect("model json")
+    }
+
+    #[test]
+    fn a_node_without_a_store_directory_refuses_to_start() {
+        let error = open_store("edge", None).err().expect("refused");
+        assert!(error.to_string().contains("C2_STORE_DIR"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_restarted_node_continues_its_write_sequence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_dir = dir.path().join("var/lib/c2/store");
+        let path = store_dir.to_str().expect("utf-8 path");
+        {
+            let store = open_store("edge", Some(path)).expect("open");
+            ingest(&store, &contact("C-1")).await.expect("ingest");
+        }
+        sleep(Duration::from_millis(300)).await;
+        let store = open_store("edge", Some(path)).expect("reopen");
+        let frame = store
+            .node()
+            .local_write(Op::Insert, ENTITY, "C-2", json(&contact("C-2")))
+            .await;
+        assert_eq!(frame.seq, 2);
+    }
+
+    #[tokio::test]
+    async fn inbox_marks_each_file_by_outcome() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inbox = dir.path();
+        std::fs::write(inbox.join("good.json"), json(&contact("C-1"))).expect("write");
+        std::fs::write(inbox.join("bad.json"), b"{\"message_type\":").expect("write");
+        std::fs::write(inbox.join("partial.tmp"), b"{").expect("write");
+        let store = Store::new(node_identity("edge"));
+        let registry = Registry::with_defaults();
+
+        scan_inbox(
+            &store,
+            &registry,
+            "edge",
+            inbox.to_str().expect("utf-8 path"),
+            "c2-json",
+        )
+        .await;
+
+        let mut names: Vec<String> = std::fs::read_dir(inbox)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, ["bad.rejected", "good.done", "partial.tmp"]);
+        assert_eq!(
+            picture(&store)
+                .await
+                .messages
+                .into_keys()
+                .collect::<Vec<_>>(),
+            ["C-1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn picture_line_lists_unreadable_records() {
+        let store = Store::new(node_identity("edge"));
+        ingest(&store, &contact("C-1")).await.expect("ingest");
+        let clean = picture_line("edge", &picture(&store).await).expect("line");
+        assert!(clean.ends_with(" ids=C-1"), "{clean}");
+
+        store
+            .node()
+            .local_write(Op::Insert, ENTITY, "BAD", b"{}".to_vec())
+            .await;
+        let line = picture_line("edge", &picture(&store).await).expect("line");
+        assert_eq!(line, format!("{clean} unreadable=BAD"));
+    }
 }

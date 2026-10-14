@@ -29,7 +29,7 @@ show_shaping
 hr "PARTITION edge from the network"
 partition_edge
 sleep 3
-cp "$HARNESS_DIR/messages/inject.json" "$HARNESS_DIR/run/inbox/edge/inject.json"
+inject_edge
 wait_for_count c2-edge 4 30 || { echo "edge did not ingest C-2"; exit 1; }
 hr "hold the partition past the 6s presence lease so edge's lease lapses"
 sleep 8

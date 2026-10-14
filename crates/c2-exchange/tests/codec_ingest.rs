@@ -98,8 +98,8 @@ async fn two_wire_formats_converge_to_one_picture_and_reexport() {
     let handles = connect(&edge, edge_io, &hq, hq_io);
 
     let converged = wait_until(Duration::from_secs(3), || async {
-        let a = picture(&edge).await.unwrap();
-        let b = picture(&hq).await.unwrap();
+        let a = picture(&edge).await.messages;
+        let b = picture(&hq).await.messages;
         a == b && a.len() == 2
     })
     .await;
@@ -108,7 +108,7 @@ async fn two_wire_formats_converge_to_one_picture_and_reexport() {
     }
     assert!(converged, "wire-format messages did not converge");
 
-    let pic = picture(&edge).await.unwrap();
+    let pic = picture(&edge).await.messages;
     assert_eq!(pic.get("C-1"), Some(&expected_contact()));
     assert_eq!(pic.get("S-1"), Some(&expected_sitrep()));
 
