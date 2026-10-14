@@ -1,4 +1,4 @@
-use crate::{refuse_label, Codec, CodecError};
+use crate::{refuse_label, validated, Codec, CodecError};
 use c2_model::C2Message;
 use serde_json::Value;
 
@@ -14,15 +14,47 @@ impl Codec for MtfXmlCodec {
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
         refuse_label(msg, self.wire_format())?;
-        let value = serde_json::to_value(msg).map_err(|e| CodecError::Encode(e.to_string()))?;
-        Ok(value_to_xml(&value)?.into_bytes())
+        msg.validate()?;
+        Ok(value_to_xml(&fields(msg)?)?.into_bytes())
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
         let xml = std::str::from_utf8(bytes).map_err(|e| CodecError::Decode(e.to_string()))?;
         let value = xml_to_value(xml)?;
-        serde_json::from_value(value).map_err(|e| CodecError::Decode(e.to_string()))
+        let msg: C2Message = validated(
+            serde_json::from_value(value.clone()).map_err(|e| CodecError::Decode(e.to_string()))?,
+        )?;
+        let known = fields(&msg)?;
+        match tags(&value).eq(tags(&known)) {
+            true => Ok(msg),
+            false => Err(CodecError::Decode(format!(
+                "elements {:?} do not match a {} message",
+                tags(&value).collect::<Vec<_>>(),
+                msg_type(&known)
+            ))),
+        }
     }
+}
+
+fn fields(msg: &C2Message) -> Result<Value, CodecError> {
+    serde_json::to_value(msg).map_err(|e| CodecError::Encode(e.to_string()))
+}
+
+fn tags(value: &Value) -> impl Iterator<Item = &String> {
+    let mut keys: Vec<&String> = value
+        .as_object()
+        .into_iter()
+        .flat_map(|o| o.keys())
+        .collect();
+    keys.sort();
+    keys.into_iter()
+}
+
+fn msg_type(value: &Value) -> &str {
+    value
+        .get("message_type")
+        .and_then(Value::as_str)
+        .unwrap_or("C2")
 }
 
 fn value_to_xml(value: &Value) -> Result<String, CodecError> {
@@ -76,25 +108,30 @@ fn xml_to_value(xml: &str) -> Result<Value, CodecError> {
             .find(&end_tag)
             .ok_or_else(|| CodecError::Decode(format!("missing closing tag for {tag}")))?;
         let raw = &after_open[..end];
-        map.insert(tag.to_string(), infer(&unescape(raw)));
+        if map.contains_key(tag) {
+            return Err(CodecError::Decode(format!("repeated element {tag}")));
+        }
+        map.insert(tag.to_string(), typed(tag, &unescape(raw))?);
         rest = &after_open[end + end_tag.len()..];
     }
     Ok(Value::Object(map))
 }
 
-fn infer(text: &str) -> Value {
-    if let Ok(u) = text.parse::<u64>() {
-        return Value::from(u);
+fn typed(tag: &str, text: &str) -> Result<Value, CodecError> {
+    let number = |parsed: Option<serde_json::Number>| {
+        parsed
+            .map(Value::Number)
+            .ok_or_else(|| CodecError::Decode(format!("{tag} {text:?} is not a number")))
+    };
+    match tag {
+        "latitude" | "longitude" => number(
+            text.parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64),
+        ),
+        "personnel_effective" => number(text.parse::<u32>().ok().map(serde_json::Number::from)),
+        _ => Ok(Value::String(text.to_string())),
     }
-    if let Ok(i) = text.parse::<i64>() {
-        return Value::from(i);
-    }
-    if let Ok(f) = text.parse::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return Value::Number(n);
-        }
-    }
-    Value::String(text.to_string())
 }
 
 fn escape(s: &str) -> String {

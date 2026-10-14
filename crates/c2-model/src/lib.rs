@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+mod validate;
+
+pub use validate::{InvalidMessage, MAX_ID_BYTES};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Domain {
     Land,

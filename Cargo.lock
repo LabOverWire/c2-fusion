@@ -327,6 +327,7 @@ name = "c2-model"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "thiserror",
 ]
 
 [[package]]

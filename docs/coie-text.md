@@ -20,9 +20,10 @@ AMPN/Vehicle stationary, N/S road//
 - Whitespace and line breaks between sets are ignored. The encoder writes one set per line.
 - A field holding `-` has no data. The encoder writes an empty value as `-`, so a value that is literally `-` cannot be encoded and is refused.
 - In ordinary sets a field cannot contain `/` or a line break.
-- `AMPN` and `NARR` are free-text sets: their single field runs to the closing `//`, so it may contain single `/` characters but not `//`, cannot end with `/`, and cannot contain a line break.
+- `AMPN` and `NARR` are free-text sets: their single field runs to the closing `//`, so it may contain single `/` characters but not `//`, cannot start or end with `/`, and cannot contain a line break.
 - The message must contain exactly the sets listed for its identifier, in that order, and nothing else.
 - A message carrying a confidentiality label is refused: the format has no set for it yet.
+- A decoded message must pass the same checks as one being encoded: coordinates are finite and within range, `TIME` is a valid `xs:dateTime` (a real calendar date), and the id is 1 to 255 bytes. A message that fails them is refused as invalid.
 
 ## Messages
 
