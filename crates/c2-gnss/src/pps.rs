@@ -56,20 +56,46 @@ pub fn step_clock(offset_nanos: i64) -> Result<(), GnssError> {
 }
 
 pub fn discipline_clock(offset_nanos: i64) -> Result<(), GnssError> {
-    let mut adjustment = libc::timex {
+    let current = adjtimex(libc::timex {
+        modes: 0,
+        ..unsafe { std::mem::zeroed() }
+    })?;
+    adjtimex(libc::timex {
         modes: libc::ADJ_OFFSET | libc::ADJ_STATUS | libc::ADJ_NANO | libc::ADJ_TIMECONST,
         offset: offset_nanos,
-        status: libc::STA_PLL,
+        status: pll_status(current.status),
         constant: PLL_TIME_CONSTANT,
         ..unsafe { std::mem::zeroed() }
-    };
-    match unsafe { libc::adjtimex(&mut adjustment) } {
+    })?;
+    Ok(())
+}
+
+fn pll_status(current: libc::c_int) -> libc::c_int {
+    (current & !libc::STA_UNSYNC & !libc::STA_RONLY) | libc::STA_PLL
+}
+
+fn adjtimex(mut request: libc::timex) -> Result<libc::timex, GnssError> {
+    match unsafe { libc::adjtimex(&mut request) } {
         -1 => Err(GnssError::Clock(nix::errno::Errno::last())),
-        _ => Ok(()),
+        _ => Ok(request),
     }
 }
 
 fn read_nanos(clock: ClockId) -> Result<i64, GnssError> {
     let time = clock_gettime(clock)?;
     Ok(time.tv_sec() * NANOS_PER_SECOND + time.tv_nsec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pll_status_keeps_a_pending_leap_second_and_clears_unsync() {
+        let status = pll_status(libc::STA_UNSYNC | libc::STA_INS | libc::STA_NANO);
+        assert_eq!(status & libc::STA_PLL, libc::STA_PLL);
+        assert_eq!(status & libc::STA_INS, libc::STA_INS);
+        assert_eq!(status & libc::STA_UNSYNC, 0);
+        assert_eq!(status & libc::STA_RONLY, 0);
+    }
 }

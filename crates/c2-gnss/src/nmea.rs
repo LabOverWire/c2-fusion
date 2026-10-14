@@ -2,6 +2,7 @@ const GGA_FIELDS: usize = 14;
 const RMC_MIN_FIELDS: usize = 11;
 const NANOS_PER_SECOND: f64 = 1e9;
 const SECONDS_PER_DAY: i64 = 86_400;
+const LEAP_SECOND: f64 = 60.0;
 const REPLY_PREFIX: &str = "command,";
 const REPLY_ACCEPTED: &str = ",response: OK";
 
@@ -93,7 +94,10 @@ pub fn parse(line: &[u8]) -> Result<Option<Sentence>, NmeaError> {
         .strip_prefix('$')
         .ok_or(NmeaError::MissingStart)?;
     let (payload, checksum) = body.rsplit_once('*').ok_or(NmeaError::MissingChecksum)?;
-    let expected = u8::from_str_radix(checksum, 16).map_err(|_| invalid("checksum", checksum))?;
+    let expected = match checksum.len() == 2 && checksum.bytes().all(|b| b.is_ascii_hexdigit()) {
+        true => u8::from_str_radix(checksum, 16).map_err(|_| invalid("checksum", checksum))?,
+        false => return Err(invalid("checksum", checksum)),
+    };
     let reply = payload.starts_with(REPLY_PREFIX);
     let computed = match reply {
         true => checksum_of(payload) ^ b'$',
@@ -147,8 +151,16 @@ fn parse_gga(rest: &str) -> Result<Gga, NmeaError> {
     Ok(Gga {
         utc_seconds_of_day: time_of_day(time)?,
         quality,
-        satellites: optional(sats, "satellites")?.unwrap_or(0),
-        hdop: optional(hdop, "hdop")?,
+        satellites: match sats {
+            "" => 0,
+            value => digits(value)
+                .and_then(|count| u8::try_from(count).ok())
+                .ok_or_else(|| invalid("satellites", value))?,
+        },
+        hdop: match hdop {
+            "" => None,
+            value => Some(decimal(value).ok_or_else(|| invalid("hdop", value))? as f32),
+        },
         position,
     })
 }
@@ -167,9 +179,11 @@ fn parse_rmc(rest: &str) -> Result<Rmc, NmeaError> {
         "V" | "" => false,
         other => return Err(invalid("rmc status", other)),
     };
-    let unix_nanos = match (time_of_day(time)?, day_number(date)?) {
-        (Some(seconds), Some(days)) => Some(
-            days * SECONDS_PER_DAY * 1_000_000_000 + (seconds * NANOS_PER_SECOND).round() as i64,
+    let unix_nanos = match (clock(time)?, day_number(date)?) {
+        (Some(clock), _) if clock.second >= LEAP_SECOND => None,
+        (Some(clock), Some(days)) => Some(
+            days * SECONDS_PER_DAY * 1_000_000_000
+                + (clock.seconds_of_day() * NANOS_PER_SECOND).round() as i64,
         ),
         _ => None,
     };
@@ -183,14 +197,28 @@ fn day_number(value: &str) -> Result<Option<i64>, NmeaError> {
     let part = |range: std::ops::Range<usize>| -> Result<i64, NmeaError> {
         value
             .get(range)
-            .and_then(|digits| digits.parse().ok())
+            .and_then(digits)
+            .map(i64::from)
             .ok_or_else(|| invalid("rmc date", value))
     };
     let (day, month, year) = (part(0..2)?, part(2..4)?, 2000 + part(4..6)?);
-    if value.len() != 6 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if value.len() != 6
+        || !(1..=12).contains(&month)
+        || !(1..=days_in_month(year, month)).contains(&day)
+    {
         return Err(invalid("rmc date", value));
     }
     Ok(Some(days_from_civil(year, month, day)))
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
@@ -210,34 +238,68 @@ fn invalid(field: &'static str, value: &str) -> NmeaError {
     }
 }
 
-fn optional<T: std::str::FromStr>(
-    value: &str,
-    field: &'static str,
-) -> Result<Option<T>, NmeaError> {
-    match value {
-        "" => Ok(None),
-        value => value.parse().map(Some).map_err(|_| invalid(field, value)),
+fn digits(value: &str) -> Option<u32> {
+    match !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+        true => value.parse().ok(),
+        false => None,
+    }
+}
+
+fn decimal(value: &str) -> Option<f64> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, "0"));
+    let plain = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match plain(whole) && plain(fraction) {
+        true => value.parse().ok(),
+        false => None,
+    }
+}
+
+fn signed_decimal(value: &str) -> Option<f64> {
+    match value.strip_prefix('-') {
+        Some(magnitude) => decimal(magnitude).map(|m| -m),
+        None => decimal(value),
+    }
+}
+
+struct Clock {
+    hour: u32,
+    minute: u32,
+    second: f64,
+}
+
+impl Clock {
+    fn seconds_of_day(&self) -> f64 {
+        f64::from(self.hour * 3600 + self.minute * 60) + self.second
     }
 }
 
 fn time_of_day(value: &str) -> Result<Option<f64>, NmeaError> {
+    Ok(clock(value)?.map(|clock| clock.seconds_of_day()))
+}
+
+fn clock(value: &str) -> Result<Option<Clock>, NmeaError> {
     if value.is_empty() {
         return Ok(None);
     }
-    let hours: u32 = value
+    let hour = value
         .get(0..2)
-        .and_then(|h| h.parse().ok())
+        .and_then(digits)
         .ok_or_else(|| invalid("utc time", value))?;
-    let minutes: u32 = value
+    let minute = value
         .get(2..4)
-        .and_then(|m| m.parse().ok())
+        .and_then(digits)
         .ok_or_else(|| invalid("utc time", value))?;
-    let seconds: f64 = value
+    let second = value
         .get(4..)
-        .and_then(|s| s.parse().ok())
+        .filter(|s| s.split('.').next().is_some_and(|whole| whole.len() == 2))
+        .and_then(decimal)
         .ok_or_else(|| invalid("utc time", value))?;
-    match (hours < 24, minutes < 60, (0.0..61.0).contains(&seconds)) {
-        (true, true, true) => Ok(Some(f64::from(hours * 3600 + minutes * 60) + seconds)),
+    match (hour < 24, minute < 60, (0.0..61.0).contains(&second)) {
+        (true, true, true) => Ok(Some(Clock {
+            hour,
+            minute,
+            second,
+        })),
         _ => Err(invalid("utc time", value)),
     }
 }
@@ -253,13 +315,14 @@ fn coordinate(
     if value.is_empty() {
         return Ok(None);
     }
-    let degrees: f64 = value
+    let degrees = value
         .get(..degree_digits)
-        .and_then(|d| d.parse().ok())
+        .and_then(digits)
+        .map(f64::from)
         .ok_or_else(|| invalid(field, value))?;
-    let minutes: f64 = value
+    let minutes = value
         .get(degree_digits..)
-        .and_then(|m| m.parse().ok())
+        .and_then(decimal)
         .ok_or_else(|| invalid(field, value))?;
     if !(0.0..60.0).contains(&minutes) {
         return Err(invalid(field, value));
@@ -268,9 +331,10 @@ fn coordinate(
     if magnitude > limit {
         return Err(invalid(field, value));
     }
-    match hemisphere.chars().next() {
-        Some(h) if h == positive => Ok(Some(magnitude)),
-        Some(h) if h == negative => Ok(Some(-magnitude)),
+    let mut letters = hemisphere.chars();
+    match (letters.next(), letters.next()) {
+        (Some(h), None) if h == positive => Ok(Some(magnitude)),
+        (Some(h), None) if h == negative => Ok(Some(-magnitude)),
         _ => Err(invalid(field, hemisphere)),
     }
 }
@@ -278,7 +342,9 @@ fn coordinate(
 fn altitude(value: &str, unit: &str) -> Result<Option<f64>, NmeaError> {
     match (value, unit) {
         ("", _) => Ok(None),
-        (value, "M") => optional(value, "altitude"),
+        (value, "M") => signed_decimal(value)
+            .map(Some)
+            .ok_or_else(|| invalid("altitude", value)),
         (_, unit) => Err(invalid("altitude unit", unit)),
     }
 }
@@ -469,5 +535,97 @@ mod tests {
     fn rejects_wrong_field_count() {
         let line = sentence("GPGGA,120000,4530.0000,N");
         assert_eq!(parse(line.as_bytes()), Err(NmeaError::FieldCount(3)));
+    }
+
+    const FIX: &str = "GNGGA,123519.50,4530.0000,N,07330.0000,W,1,14,1.7,64.45,M,-18.82,M,,";
+
+    fn fix_with(from: &str, to: &str) -> Result<Option<Sentence>, NmeaError> {
+        assert!(FIX.contains(from), "{from}");
+        parse(sentence(&FIX.replacen(from, to, 1)).as_bytes())
+    }
+
+    fn refused_field(result: Result<Option<Sentence>, NmeaError>) -> &'static str {
+        match result {
+            Err(NmeaError::Field { field, .. }) => field,
+            other => panic!("expected a field error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_non_numeric_and_signed_coordinates() {
+        assert_eq!(
+            refused_field(fix_with("07330.0000", "nan30.0000")),
+            "longitude"
+        );
+        assert_eq!(
+            refused_field(fix_with("07330.0000", "07330.0e00")),
+            "longitude"
+        );
+        assert_eq!(
+            refused_field(fix_with("4530.0000,N", "-930.0000,N")),
+            "latitude"
+        );
+        assert_eq!(
+            refused_field(fix_with("4530.0000,N", "+930.0000,N")),
+            "latitude"
+        );
+        assert_eq!(
+            refused_field(fix_with("4530.0000,N", "45-1.0000,N")),
+            "latitude"
+        );
+    }
+
+    #[test]
+    fn rejects_non_finite_altitude_and_hdop() {
+        assert_eq!(refused_field(fix_with(",64.45,M", ",NaN,M")), "altitude");
+        assert_eq!(refused_field(fix_with(",64.45,M", ",inf,M")), "altitude");
+        assert_eq!(refused_field(fix_with(",1.7,", ",NaN,")), "hdop");
+        assert_eq!(refused_field(fix_with(",1.7,", ",inf,")), "hdop");
+        assert_eq!(refused_field(fix_with(",1.7,", ",-1.7,")), "hdop");
+    }
+
+    #[test]
+    fn keeps_a_negative_altitude() {
+        let fix = gga(&sentence(&FIX.replacen(",64.45,M", ",-12.5,M", 1)));
+        assert_eq!(fix.position.expect("position").altitude_msl_m, Some(-12.5));
+    }
+
+    #[test]
+    fn hemisphere_time_satellites_and_checksum_must_be_exact() {
+        assert_eq!(
+            refused_field(fix_with("07330.0000,W", "07330.0000,Wx")),
+            "longitude"
+        );
+        assert_eq!(refused_field(fix_with("123519.50", "+10000")), "utc time");
+        assert_eq!(refused_field(fix_with("123519.50", "12351.50")), "utc time");
+        assert_eq!(refused_field(fix_with(",14,", ",+4,")), "satellites");
+        assert_eq!(refused_field(fix_with(",14,", ",300,")), "satellites");
+        for checksum in ["+48", "4", "048", "4G"] {
+            let line = format!("$GPGGA,,,,,,0,00,99.99,,,,,,*{checksum}\r\n");
+            assert_eq!(
+                refused_field(parse(line.as_bytes())),
+                "checksum",
+                "{checksum}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_days_past_the_end_of_the_month() {
+        for date in ["310226", "300226", "290226", "310426", "310926"] {
+            let line = sentence(&format!("GPRMC,120000,A,,,,,,,{date},,"));
+            assert_eq!(refused_field(parse(line.as_bytes())), "rmc date", "{date}");
+        }
+        let leap_day = rmc(&sentence("GPRMC,120000,A,,,,,,,290228,,"));
+        assert!(leap_day.unix_nanos.is_some());
+    }
+
+    #[test]
+    fn leap_second_has_no_unix_time() {
+        let leap = rmc(&sentence("GPRMC,235960,A,,,,,,,311226,,"));
+        assert!(leap.valid);
+        assert_eq!(leap.unix_nanos, None);
+        let midnight = rmc(&sentence("GPRMC,000000,A,,,,,,,010127,,"));
+        assert!(midnight.unix_nanos.is_some());
     }
 }
