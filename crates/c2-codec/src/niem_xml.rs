@@ -110,56 +110,61 @@ impl Codec for NiemXmlCodec {
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
         let text = std::str::from_utf8(bytes).map_err(|e| CodecError::Decode(e.to_string()))?;
-        let document = Document::parse(text)?;
-        match document.root.as_str() {
-            CONTACT_REPORT => Ok(C2Message::ContactReport(ContactReport {
-                id: document.text(DOCUMENT_ID)?,
-                reporting_unit: document.text(AUTHOR_NAME)?,
-                domain: domain_from(&document.text(DOMAIN_CODE)?)?,
-                service: service_from(&document.text(SERVICE_CODE)?)?,
-                observed_at: document.text("mo:Observation/mo:ObservationDateTime")?,
-                latitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LATITUDE}"))?,
-                longitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LONGITUDE}"))?,
-                description: document.text("nc:DocumentDescriptionText")?,
-                label: None,
-            })),
-            SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
-                id: document.text(DOCUMENT_ID)?,
-                reporting_unit: document.text(AUTHOR_NAME)?,
-                domain: domain_from(&document.text(DOMAIN_CODE)?)?,
-                service: service_from(&document.text(SERVICE_CODE)?)?,
-                reported_at: document.text(CREATED_AT)?,
-                summary: document.text("nc:DocumentSummaryText")?,
-                personnel_effective: document
-                    .text("usmtf:AvailablePersonnelQuantity")?
-                    .trim()
-                    .parse()
-                    .map_err(|e| CodecError::Decode(format!("personnel quantity: {e}")))?,
-                label: None,
-            })),
-            INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
-                id: document.text("nc:RequestIdentification/nc:IdentificationID")?,
-                requesting_unit: document.text("c2f:RequestingOrganization/nc:OrganizationName")?,
-                domain: domain_from(&document.text(DOMAIN_CODE)?)?,
-                service: service_from(&document.text(SERVICE_CODE)?)?,
-                requested_at: document.text("nc:RequestDate/nc:DateTime")?,
-                question: document.text("nc:RequestText")?,
-                label: None,
-            })),
-            POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
-                id: document.text(DOCUMENT_ID)?,
-                reporting_unit: document.text("mo:Unit/mo:UnitName")?,
-                domain: domain_from(&document.text(DOMAIN_CODE)?)?,
-                service: service_from(&document.text(SERVICE_CODE)?)?,
-                reported_at: document.text(CREATED_AT)?,
-                latitude: document.degrees(&format!("{UNIT_COORDINATE}/{LATITUDE}"))?,
-                longitude: document.degrees(&format!("{UNIT_COORDINATE}/{LONGITUDE}"))?,
-                label: None,
-            })),
-            other => Err(CodecError::Decode(format!(
-                "unknown NIEM message root {other}"
-            ))),
-        }
+        let msg = message(&Document::parse(text)?)?;
+        check(&msg)?;
+        Ok(msg)
+    }
+}
+
+fn message(document: &Document) -> Result<C2Message, CodecError> {
+    match document.root.as_str() {
+        CONTACT_REPORT => Ok(C2Message::ContactReport(ContactReport {
+            id: document.text(DOCUMENT_ID)?,
+            reporting_unit: document.text(AUTHOR_NAME)?,
+            domain: domain_from(&document.text(DOMAIN_CODE)?)?,
+            service: service_from(&document.text(SERVICE_CODE)?)?,
+            observed_at: document.text("mo:Observation/mo:ObservationDateTime")?,
+            latitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LATITUDE}"))?,
+            longitude: document.degrees(&format!("{OBSERVED_COORDINATE}/{LONGITUDE}"))?,
+            description: document.text("nc:DocumentDescriptionText")?,
+            label: None,
+        })),
+        SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
+            id: document.text(DOCUMENT_ID)?,
+            reporting_unit: document.text(AUTHOR_NAME)?,
+            domain: domain_from(&document.text(DOMAIN_CODE)?)?,
+            service: service_from(&document.text(SERVICE_CODE)?)?,
+            reported_at: document.text(CREATED_AT)?,
+            summary: document.text("nc:DocumentSummaryText")?,
+            personnel_effective: document
+                .text("usmtf:AvailablePersonnelQuantity")?
+                .trim()
+                .parse()
+                .map_err(|e| CodecError::Decode(format!("personnel quantity: {e}")))?,
+            label: None,
+        })),
+        INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
+            id: document.text("nc:RequestIdentification/nc:IdentificationID")?,
+            requesting_unit: document.text("c2f:RequestingOrganization/nc:OrganizationName")?,
+            domain: domain_from(&document.text(DOMAIN_CODE)?)?,
+            service: service_from(&document.text(SERVICE_CODE)?)?,
+            requested_at: document.text("nc:RequestDate/nc:DateTime")?,
+            question: document.text("nc:RequestText")?,
+            label: None,
+        })),
+        POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
+            id: document.text(DOCUMENT_ID)?,
+            reporting_unit: document.text("mo:Unit/mo:UnitName")?,
+            domain: domain_from(&document.text(DOMAIN_CODE)?)?,
+            service: service_from(&document.text(SERVICE_CODE)?)?,
+            reported_at: document.text(CREATED_AT)?,
+            latitude: document.degrees(&format!("{UNIT_COORDINATE}/{LATITUDE}"))?,
+            longitude: document.degrees(&format!("{UNIT_COORDINATE}/{LONGITUDE}"))?,
+            label: None,
+        })),
+        other => Err(CodecError::Decode(format!(
+            "unknown NIEM message root {other}"
+        ))),
     }
 }
 
@@ -174,27 +179,43 @@ impl Document {
         let mut path: Vec<String> = Vec::new();
         let mut root = None;
         let mut texts = HashMap::new();
+        let mut closed = false;
         loop {
             let (namespace, event) = reader
                 .read_resolved_event()
                 .map_err(|e| CodecError::Decode(e.to_string()))?;
+            if closed {
+                match event {
+                    Event::Eof => break,
+                    Event::Text(text) if text.xml10_content().trim().is_empty() => continue,
+                    Event::Comment(_) | Event::PI(_) => continue,
+                    _ => {
+                        return Err(CodecError::Decode(
+                            "content after the root element".to_string(),
+                        ))
+                    }
+                }
+            }
             match event {
                 Event::Start(start) => {
                     let name = qualified(&namespace, &start);
                     match root {
                         None => root = Some(name),
-                        Some(_) => path.push(name),
+                        Some(_) => {
+                            path.push(name);
+                            open_element(&mut texts, &path)?;
+                        }
                     }
-                    texts.entry(path.join("/")).or_insert_with(String::new);
                 }
                 Event::Empty(start) => {
                     let name = qualified(&namespace, &start);
                     if root.is_none() {
                         root = Some(name);
+                        closed = true;
                         continue;
                     }
                     path.push(name);
-                    texts.entry(path.join("/")).or_insert_with(String::new);
+                    open_element(&mut texts, &path)?;
                     path.pop();
                 }
                 Event::Text(text) => append(&mut texts, &path, &text.xml10_content()),
@@ -210,7 +231,9 @@ impl Document {
                     append(&mut texts, &path, &resolved);
                 }
                 Event::End(_) => {
-                    path.pop();
+                    if path.pop().is_none() {
+                        closed = true;
+                    }
                 }
                 Event::Eof => break,
                 _ => {}
@@ -234,6 +257,17 @@ impl Document {
             .trim()
             .parse()
             .map_err(|e| CodecError::Decode(format!("{path}: {e}")))
+    }
+}
+
+fn open_element(texts: &mut HashMap<String, String>, path: &[String]) -> Result<(), CodecError> {
+    let key = path.join("/");
+    match texts.contains_key(&key) {
+        true => Err(CodecError::Decode(format!("repeated element {key}"))),
+        false => {
+            texts.insert(key, String::new());
+            Ok(())
+        }
     }
 }
 

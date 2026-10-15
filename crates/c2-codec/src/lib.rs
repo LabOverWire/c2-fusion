@@ -1,4 +1,4 @@
-use c2_model::C2Message;
+use c2_model::{C2Message, InvalidMessage};
 
 mod codes;
 pub mod coie_text;
@@ -8,6 +8,7 @@ pub mod mtf_xml;
 pub mod niem;
 pub mod niem_json;
 pub mod niem_xml;
+mod strict_json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
@@ -17,6 +18,19 @@ pub enum CodecError {
     Decode(String),
     #[error("unsupported wire format: {0}")]
     Unsupported(String),
+    #[error("invalid message: {0}")]
+    Invalid(String),
+}
+
+impl From<InvalidMessage> for CodecError {
+    fn from(error: InvalidMessage) -> Self {
+        CodecError::Invalid(error.to_string())
+    }
+}
+
+fn validated(msg: C2Message) -> Result<C2Message, CodecError> {
+    msg.validate()?;
+    Ok(msg)
 }
 
 fn refuse_label(msg: &C2Message, wire_format: &str) -> Result<(), CodecError> {

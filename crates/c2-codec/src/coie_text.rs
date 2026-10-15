@@ -1,7 +1,7 @@
 use c2_model::{C2Message, ContactReport, Domain, FunctionalService, PositionReport, Rfi, Sitrep};
 
 use crate::codes::{domain_code, domain_from, service_code, service_from};
-use crate::{refuse_label, Codec, CodecError};
+use crate::{refuse_label, validated, Codec, CodecError};
 
 const SET_END: &str = "//";
 const FIELD: char = '/';
@@ -30,6 +30,7 @@ impl Codec for CoieTextCodec {
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
         refuse_label(msg, self.wire_format())?;
+        msg.validate()?;
         let lines = match msg {
             C2Message::ContactReport(m) => vec![
                 msgid(CONTACT_REPORT, &m.reporting_unit, &m.id, &m.observed_at)?,
@@ -68,102 +69,105 @@ impl Codec for CoieTextCodec {
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
         let text = std::str::from_utf8(bytes).map_err(|e| CodecError::Decode(e.to_string()))?;
-        let sets = parse(text)?;
-        let [msgid, rest @ ..] = sets.as_slice() else {
-            return Err(CodecError::Decode("message has no sets".to_string()));
-        };
-        let (identifier, originator, serial, month) =
-            match (msgid.id.as_str(), msgid.fields.as_slice()) {
-                ("MSGID", [identifier, originator, serial, month]) => {
-                    (identifier, originator, serial, month)
-                }
-                _ => {
-                    return Err(CodecError::Decode(
-                        "message must start with MSGID/identifier/originator/serial/month//"
-                            .to_string(),
-                    ))
-                }
-            };
-        let time = single(rest, "TIME")?;
-        if month_of(&time)? != month.as_str() {
-            return Err(CodecError::Decode(format!(
-                "MSGID month {month} does not match TIME {time}"
-            )));
+        validated(message(text)?)
+    }
+}
+
+fn message(text: &str) -> Result<C2Message, CodecError> {
+    let sets = parse(text)?;
+    let [msgid, rest @ ..] = sets.as_slice() else {
+        return Err(CodecError::Decode("message has no sets".to_string()));
+    };
+    let (identifier, originator, serial, month) = match (msgid.id.as_str(), msgid.fields.as_slice())
+    {
+        ("MSGID", [identifier, originator, serial, month]) => {
+            (identifier, originator, serial, month)
         }
-        let (domain, service) = match find(rest, "CLASS")?.fields.as_slice() {
-            [domain, service] => (domain_from(domain)?, service_from(service)?),
-            _ => {
-                return Err(CodecError::Decode(
-                    "CLASS must carry a domain and a service".to_string(),
-                ))
-            }
-        };
-        let expected: &[&str] = match identifier.as_str() {
-            CONTACT_REPORT => &["TIME", "POSITION", "CLASS", "AMPN"],
-            SITUATION_REPORT => &["TIME", "PERS", "CLASS", "NARR"],
-            INFORMATION_REQUEST => &["TIME", "CLASS", "NARR"],
-            POSITION_REPORT => &["TIME", "POSITION", "CLASS"],
-            other => {
-                return Err(CodecError::Decode(format!(
-                    "unknown message identifier {other}"
-                )))
-            }
-        };
-        let found: Vec<&str> = rest.iter().map(|set| set.id.as_str()).collect();
-        if found != expected {
-            return Err(CodecError::Decode(format!(
-                "{identifier} sets must be {expected:?}, found {found:?}"
-            )));
+        _ => {
+            return Err(CodecError::Decode(
+                "message must start with MSGID/identifier/originator/serial/month//".to_string(),
+            ))
         }
-        match identifier.as_str() {
-            CONTACT_REPORT => {
-                let (latitude, longitude) = coordinates(rest)?;
-                Ok(C2Message::ContactReport(ContactReport {
-                    id: serial.clone(),
-                    reporting_unit: originator.clone(),
-                    domain,
-                    service,
-                    observed_at: time,
-                    latitude,
-                    longitude,
-                    description: single(rest, "AMPN")?,
-                    label: None,
-                }))
-            }
-            SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
+    };
+    let time = single(rest, "TIME")?;
+    if month_of(&time)? != month.as_str() {
+        return Err(CodecError::Decode(format!(
+            "MSGID month {month} does not match TIME {time}"
+        )));
+    }
+    let (domain, service) = match find(rest, "CLASS")?.fields.as_slice() {
+        [domain, service] => (domain_from(domain)?, service_from(service)?),
+        _ => {
+            return Err(CodecError::Decode(
+                "CLASS must carry a domain and a service".to_string(),
+            ))
+        }
+    };
+    let expected: &[&str] = match identifier.as_str() {
+        CONTACT_REPORT => &["TIME", "POSITION", "CLASS", "AMPN"],
+        SITUATION_REPORT => &["TIME", "PERS", "CLASS", "NARR"],
+        INFORMATION_REQUEST => &["TIME", "CLASS", "NARR"],
+        POSITION_REPORT => &["TIME", "POSITION", "CLASS"],
+        other => {
+            return Err(CodecError::Decode(format!(
+                "unknown message identifier {other}"
+            )))
+        }
+    };
+    let found: Vec<&str> = rest.iter().map(|set| set.id.as_str()).collect();
+    if found != expected {
+        return Err(CodecError::Decode(format!(
+            "{identifier} sets must be {expected:?}, found {found:?}"
+        )));
+    }
+    match identifier.as_str() {
+        CONTACT_REPORT => {
+            let (latitude, longitude) = coordinates(rest)?;
+            Ok(C2Message::ContactReport(ContactReport {
+                id: serial.clone(),
+                reporting_unit: originator.clone(),
+                domain,
+                service,
+                observed_at: time,
+                latitude,
+                longitude,
+                description: single(rest, "AMPN")?,
+                label: None,
+            }))
+        }
+        SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
+            id: serial.clone(),
+            reporting_unit: originator.clone(),
+            domain,
+            service,
+            reported_at: time,
+            summary: single(rest, "NARR")?,
+            personnel_effective: single(rest, "PERS")?
+                .parse()
+                .map_err(|e| CodecError::Decode(format!("PERS: {e}")))?,
+            label: None,
+        })),
+        INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
+            id: serial.clone(),
+            requesting_unit: originator.clone(),
+            domain,
+            service,
+            requested_at: time,
+            question: single(rest, "NARR")?,
+            label: None,
+        })),
+        _ => {
+            let (latitude, longitude) = coordinates(rest)?;
+            Ok(C2Message::PositionReport(PositionReport {
                 id: serial.clone(),
                 reporting_unit: originator.clone(),
                 domain,
                 service,
                 reported_at: time,
-                summary: single(rest, "NARR")?,
-                personnel_effective: single(rest, "PERS")?
-                    .parse()
-                    .map_err(|e| CodecError::Decode(format!("PERS: {e}")))?,
+                latitude,
+                longitude,
                 label: None,
-            })),
-            INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
-                id: serial.clone(),
-                requesting_unit: originator.clone(),
-                domain,
-                service,
-                requested_at: time,
-                question: single(rest, "NARR")?,
-                label: None,
-            })),
-            _ => {
-                let (latitude, longitude) = coordinates(rest)?;
-                Ok(C2Message::PositionReport(PositionReport {
-                    id: serial.clone(),
-                    reporting_unit: originator.clone(),
-                    domain,
-                    service,
-                    reported_at: time,
-                    latitude,
-                    longitude,
-                    label: None,
-                }))
-            }
+            }))
         }
     }
 }
@@ -257,9 +261,13 @@ fn free_text(id: &str, value: &str) -> Result<String, CodecError> {
         NO_DATA => Err(CodecError::Encode(
             "free text cannot be the no-data sign - itself".to_string(),
         )),
-        _ if value.contains(SET_END) || value.contains(['\n', '\r']) || value.ends_with(FIELD) => {
+        _ if value.contains(SET_END)
+            || value.contains(['\n', '\r'])
+            || value.starts_with(FIELD)
+            || value.ends_with(FIELD) =>
+        {
             Err(CodecError::Encode(format!(
-                "free text {value:?} contains //, ends with /, or contains a line break"
+                "free text {value:?} contains //, starts or ends with /, or contains a line break"
             )))
         }
         _ => Ok(format!("{id}/{value}{SET_END}")),
@@ -276,11 +284,6 @@ fn msgid(
 }
 
 fn position(latitude: f64, longitude: f64) -> Result<String, CodecError> {
-    if !latitude.is_finite() || !longitude.is_finite() {
-        return Err(CodecError::Encode(format!(
-            "coordinate {latitude}, {longitude} is not finite"
-        )));
-    }
     set("POSITION", &[&latitude.to_string(), &longitude.to_string()])
 }
 
@@ -293,7 +296,9 @@ fn month_of(time: &str) -> Result<&'static str, CodecError> {
         .get(5..7)
         .and_then(|digits| digits.parse().ok())
         .filter(|month| (1..=12).contains(month))
-        .ok_or_else(|| CodecError::Encode(format!("time {time:?} is not an ISO 8601 date-time")))?;
+        .ok_or_else(|| {
+            CodecError::Invalid(format!("time {time:?} is not an ISO 8601 date-time"))
+        })?;
     Ok(MONTHS[month - 1])
 }
 

@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::codes::{domain_code, domain_from, service_code, service_from};
 use crate::niem::{check, C2F, MO, NC, USMTF};
-use crate::{refuse_label, Codec, CodecError};
+use crate::{refuse_label, strict_json, Codec, CodecError};
 
 const CONTEXT: &str = "@context";
 const CONTACT_REPORT: &str = "c2f:ContactReportMessage";
@@ -101,8 +101,7 @@ impl Codec for NiemJsonCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
-        let value: Value =
-            serde_json::from_slice(bytes).map_err(|e| CodecError::Decode(e.to_string()))?;
+        let value = strict_json::parse(bytes)?;
         let document = value.as_object().ok_or_else(|| {
             CodecError::Decode("a NIEM JSON message must be an object".to_string())
         })?;
@@ -117,59 +116,65 @@ impl Codec for NiemJsonCodec {
             }
         };
         let body = canonical(body, &prefixes)?;
-        match canonical_key(root, &prefixes)?.as_str() {
-            CONTACT_REPORT => Ok(C2Message::ContactReport(ContactReport {
-                id: string(&body, DOCUMENT_ID)?,
-                reporting_unit: string(&body, AUTHOR_NAME)?,
-                domain: domain_from(&string(&body, &[DOMAIN_CODE])?)?,
-                service: service_from(&string(&body, &[SERVICE_CODE])?)?,
-                observed_at: string(&body, &["mo:Observation", "mo:ObservationDateTime"])?,
-                latitude: degrees(&body, &observed(LATITUDE))?,
-                longitude: degrees(&body, &observed(LONGITUDE))?,
-                description: string(&body, &["nc:DocumentDescriptionText", TEXT])?,
-                label: None,
-            })),
-            SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
-                id: string(&body, DOCUMENT_ID)?,
-                reporting_unit: string(&body, AUTHOR_NAME)?,
-                domain: domain_from(&string(&body, &[DOMAIN_CODE])?)?,
-                service: service_from(&string(&body, &[SERVICE_CODE])?)?,
-                reported_at: string(&body, CREATED_AT)?,
-                summary: string(&body, &["nc:DocumentSummaryText", TEXT])?,
-                personnel_effective: find(&body, &["usmtf:AvailablePersonnelQuantity"])?
-                    .as_u64()
-                    .and_then(|quantity| u32::try_from(quantity).ok())
-                    .ok_or_else(|| {
-                        CodecError::Decode("personnel quantity is not a count".to_string())
-                    })?,
-                label: None,
-            })),
-            INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
-                id: string(&body, &["nc:RequestIdentification", "nc:IdentificationID"])?,
-                requesting_unit: string(
-                    &body,
-                    &["c2f:RequestingOrganization", "nc:OrganizationName", TEXT],
-                )?,
-                domain: domain_from(&string(&body, &[DOMAIN_CODE])?)?,
-                service: service_from(&string(&body, &[SERVICE_CODE])?)?,
-                requested_at: string(&body, &["nc:RequestDate", "nc:DateTime"])?,
-                question: string(&body, &["nc:RequestText", TEXT])?,
-                label: None,
-            })),
-            POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
-                id: string(&body, DOCUMENT_ID)?,
-                reporting_unit: string(&body, &["mo:Unit", "mo:UnitName"])?,
-                domain: domain_from(&string(&body, &[DOMAIN_CODE])?)?,
-                service: service_from(&string(&body, &[SERVICE_CODE])?)?,
-                reported_at: string(&body, CREATED_AT)?,
-                latitude: degrees(&body, &unit(LATITUDE))?,
-                longitude: degrees(&body, &unit(LONGITUDE))?,
-                label: None,
-            })),
-            other => Err(CodecError::Decode(format!(
-                "unknown NIEM message property {other}"
-            ))),
-        }
+        let msg = message(&canonical_key(root, &prefixes)?, &body)?;
+        check(&msg)?;
+        Ok(msg)
+    }
+}
+
+fn message(root: &str, body: &Value) -> Result<C2Message, CodecError> {
+    match root {
+        CONTACT_REPORT => Ok(C2Message::ContactReport(ContactReport {
+            id: string(body, DOCUMENT_ID)?,
+            reporting_unit: string(body, AUTHOR_NAME)?,
+            domain: domain_from(&string(body, &[DOMAIN_CODE])?)?,
+            service: service_from(&string(body, &[SERVICE_CODE])?)?,
+            observed_at: string(body, &["mo:Observation", "mo:ObservationDateTime"])?,
+            latitude: degrees(body, &observed(LATITUDE))?,
+            longitude: degrees(body, &observed(LONGITUDE))?,
+            description: string(body, &["nc:DocumentDescriptionText", TEXT])?,
+            label: None,
+        })),
+        SITUATION_REPORT => Ok(C2Message::Sitrep(Sitrep {
+            id: string(body, DOCUMENT_ID)?,
+            reporting_unit: string(body, AUTHOR_NAME)?,
+            domain: domain_from(&string(body, &[DOMAIN_CODE])?)?,
+            service: service_from(&string(body, &[SERVICE_CODE])?)?,
+            reported_at: string(body, CREATED_AT)?,
+            summary: string(body, &["nc:DocumentSummaryText", TEXT])?,
+            personnel_effective: find(body, &["usmtf:AvailablePersonnelQuantity"])?
+                .as_u64()
+                .and_then(|quantity| u32::try_from(quantity).ok())
+                .ok_or_else(|| {
+                    CodecError::Decode("personnel quantity is not a count".to_string())
+                })?,
+            label: None,
+        })),
+        INFORMATION_REQUEST => Ok(C2Message::Rfi(Rfi {
+            id: string(body, &["nc:RequestIdentification", "nc:IdentificationID"])?,
+            requesting_unit: string(
+                body,
+                &["c2f:RequestingOrganization", "nc:OrganizationName", TEXT],
+            )?,
+            domain: domain_from(&string(body, &[DOMAIN_CODE])?)?,
+            service: service_from(&string(body, &[SERVICE_CODE])?)?,
+            requested_at: string(body, &["nc:RequestDate", "nc:DateTime"])?,
+            question: string(body, &["nc:RequestText", TEXT])?,
+            label: None,
+        })),
+        POSITION_REPORT => Ok(C2Message::PositionReport(PositionReport {
+            id: string(body, DOCUMENT_ID)?,
+            reporting_unit: string(body, &["mo:Unit", "mo:UnitName"])?,
+            domain: domain_from(&string(body, &[DOMAIN_CODE])?)?,
+            service: service_from(&string(body, &[SERVICE_CODE])?)?,
+            reported_at: string(body, CREATED_AT)?,
+            latitude: degrees(body, &unit(LATITUDE))?,
+            longitude: degrees(body, &unit(LONGITUDE))?,
+            label: None,
+        })),
+        other => Err(CodecError::Decode(format!(
+            "unknown NIEM message property {other}"
+        ))),
     }
 }
 
@@ -253,11 +258,17 @@ fn canonical_key(key: &str, prefixes: &HashMap<String, String>) -> Result<String
 
 fn canonical(value: &Value, prefixes: &HashMap<String, String>) -> Result<Value, CodecError> {
     match value {
-        Value::Object(object) => object
-            .iter()
-            .map(|(key, child)| Ok((canonical_key(key, prefixes)?, canonical(child, prefixes)?)))
-            .collect::<Result<Map<String, Value>, CodecError>>()
-            .map(Value::Object),
+        Value::Object(object) => {
+            let mut canonical_object = Map::new();
+            for (key, child) in object {
+                let name = canonical_key(key, prefixes)?;
+                if canonical_object.contains_key(&name) {
+                    return Err(CodecError::Decode(format!("{key} repeats property {name}")));
+                }
+                canonical_object.insert(name, canonical(child, prefixes)?);
+            }
+            Ok(Value::Object(canonical_object))
+        }
         Value::Array(items) => items
             .iter()
             .map(|item| canonical(item, prefixes))
@@ -274,9 +285,16 @@ fn find<'a>(body: &'a Value, path: &[&str]) -> Result<&'a Value, CodecError> {
             .get(*key)
             .ok_or_else(|| CodecError::Decode(format!("missing {}", path.join("/"))))?;
         if let Value::Array(items) = node {
-            node = items
-                .first()
-                .ok_or_else(|| CodecError::Decode(format!("empty {}", path.join("/"))))?;
+            node = match items.as_slice() {
+                [only] => only,
+                _ => {
+                    return Err(CodecError::Decode(format!(
+                        "{} must hold exactly one value, found {}",
+                        path.join("/"),
+                        items.len()
+                    )))
+                }
+            };
         }
     }
     Ok(node)

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use c2_codec::{Codec, CodecError, Registry};
-use c2_model::C2Message;
+use c2_model::{C2Message, InvalidMessage};
 use stitch_p2p::Store;
 
 pub mod radio;
@@ -16,9 +16,12 @@ pub enum ExchangeError {
     Store(#[from] stitch_p2p::StoreError),
     #[error("codec error: {0}")]
     Codec(#[from] CodecError),
+    #[error("invalid message: {0}")]
+    Invalid(#[from] InvalidMessage),
 }
 
 pub async fn ingest(store: &Store, msg: &C2Message) -> Result<(), ExchangeError> {
+    msg.validate()?;
     let value = serde_json::to_value(msg)?;
     store.create(ENTITY, msg.id(), value).await?;
     Ok(())

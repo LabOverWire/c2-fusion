@@ -1,4 +1,4 @@
-use crate::{Codec, CodecError};
+use crate::{validated, Codec, CodecError};
 use c2_model::C2Message;
 
 pub struct JsonCodec;
@@ -9,11 +9,12 @@ impl Codec for JsonCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        msg.validate()?;
         serde_json::to_vec(msg).map_err(|e| CodecError::Encode(e.to_string()))
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
-        serde_json::from_slice(bytes).map_err(|e| CodecError::Decode(e.to_string()))
+        validated(serde_json::from_slice(bytes).map_err(|e| CodecError::Decode(e.to_string()))?)
     }
 }
 

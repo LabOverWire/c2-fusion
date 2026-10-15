@@ -1,6 +1,6 @@
 use bebytes::BeBytes;
 
-use crate::{Codec, CodecError};
+use crate::{validated, Codec, CodecError};
 use c2_model::{
     C2Message, Category, CategoryKind, ConfidentialityLabel, ContactReport, Domain,
     FunctionalService, Policy, PositionReport, Rfi, Sitrep,
@@ -140,6 +140,7 @@ impl Codec for CompactCodec {
     }
 
     fn encode(&self, msg: &C2Message) -> Result<Vec<u8>, CodecError> {
+        msg.validate()?;
         let (kind, domain, service, body) = match msg {
             C2Message::ContactReport(m) => (
                 CONTACT_REPORT,
@@ -224,71 +225,75 @@ impl Codec for CompactCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<C2Message, CodecError> {
-        let (prefix, consumed) = Prefix::try_from_be_bytes(bytes).map_err(malformed)?;
-        if prefix.version != VERSION {
-            return Err(CodecError::Decode(format!(
-                "unknown compact version {}",
-                prefix.version
-            )));
+        validated(message(bytes)?)
+    }
+}
+
+fn message(bytes: &[u8]) -> Result<C2Message, CodecError> {
+    let (prefix, consumed) = Prefix::try_from_be_bytes(bytes).map_err(malformed)?;
+    if prefix.version != VERSION {
+        return Err(CodecError::Decode(format!(
+            "unknown compact version {}",
+            prefix.version
+        )));
+    }
+    let domain = domain_from(prefix.domain)?;
+    let service = service_from(prefix.service)?;
+    let body = &bytes[consumed..];
+    match prefix.kind {
+        CONTACT_REPORT => {
+            let (wire, label): (ContactWire, _) = with_label(body, prefix.labelled)?;
+            Ok(C2Message::ContactReport(ContactReport {
+                id: wire.id,
+                reporting_unit: wire.reporting_unit,
+                domain,
+                service,
+                observed_at: wire.observed_at,
+                latitude: wire.latitude,
+                longitude: wire.longitude,
+                description: wire.description,
+                label,
+            }))
         }
-        let domain = domain_from(prefix.domain)?;
-        let service = service_from(prefix.service)?;
-        let body = &bytes[consumed..];
-        match prefix.kind {
-            CONTACT_REPORT => {
-                let (wire, label): (ContactWire, _) = with_label(body, prefix.labelled)?;
-                Ok(C2Message::ContactReport(ContactReport {
-                    id: wire.id,
-                    reporting_unit: wire.reporting_unit,
-                    domain,
-                    service,
-                    observed_at: wire.observed_at,
-                    latitude: wire.latitude,
-                    longitude: wire.longitude,
-                    description: wire.description,
-                    label,
-                }))
-            }
-            SITREP => {
-                let (wire, label): (SitrepWire, _) = with_label(body, prefix.labelled)?;
-                Ok(C2Message::Sitrep(Sitrep {
-                    id: wire.id,
-                    reporting_unit: wire.reporting_unit,
-                    domain,
-                    service,
-                    reported_at: wire.reported_at,
-                    summary: wire.summary,
-                    personnel_effective: wire.personnel_effective,
-                    label,
-                }))
-            }
-            RFI => {
-                let (wire, label): (RfiWire, _) = with_label(body, prefix.labelled)?;
-                Ok(C2Message::Rfi(Rfi {
-                    id: wire.id,
-                    requesting_unit: wire.requesting_unit,
-                    domain,
-                    service,
-                    requested_at: wire.requested_at,
-                    question: wire.question,
-                    label,
-                }))
-            }
-            POSITION_REPORT => {
-                let (wire, label): (PositionWire, _) = with_label(body, prefix.labelled)?;
-                Ok(C2Message::PositionReport(PositionReport {
-                    id: wire.id,
-                    reporting_unit: wire.reporting_unit,
-                    domain,
-                    service,
-                    reported_at: wire.reported_at,
-                    latitude: wire.latitude,
-                    longitude: wire.longitude,
-                    label,
-                }))
-            }
-            other => Err(CodecError::Decode(format!("unknown message kind {other}"))),
+        SITREP => {
+            let (wire, label): (SitrepWire, _) = with_label(body, prefix.labelled)?;
+            Ok(C2Message::Sitrep(Sitrep {
+                id: wire.id,
+                reporting_unit: wire.reporting_unit,
+                domain,
+                service,
+                reported_at: wire.reported_at,
+                summary: wire.summary,
+                personnel_effective: wire.personnel_effective,
+                label,
+            }))
         }
+        RFI => {
+            let (wire, label): (RfiWire, _) = with_label(body, prefix.labelled)?;
+            Ok(C2Message::Rfi(Rfi {
+                id: wire.id,
+                requesting_unit: wire.requesting_unit,
+                domain,
+                service,
+                requested_at: wire.requested_at,
+                question: wire.question,
+                label,
+            }))
+        }
+        POSITION_REPORT => {
+            let (wire, label): (PositionWire, _) = with_label(body, prefix.labelled)?;
+            Ok(C2Message::PositionReport(PositionReport {
+                id: wire.id,
+                reporting_unit: wire.reporting_unit,
+                domain,
+                service,
+                reported_at: wire.reported_at,
+                latitude: wire.latitude,
+                longitude: wire.longitude,
+                label,
+            }))
+        }
+        other => Err(CodecError::Decode(format!("unknown message kind {other}"))),
     }
 }
 
