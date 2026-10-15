@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use bebytes::BeBytes;
@@ -13,6 +14,7 @@ const HELLO: u8 = 1;
 const FRAGMENT: u8 = 2;
 
 pub const MAX_FRAGMENTS: usize = 16;
+pub const HELLO_CURSORS: usize = 5;
 const MAX_PARTIALS: usize = 4;
 const PARTIAL_EXPIRY: Duration = Duration::from_secs(60);
 const FRAGMENT_HEADER_LEN: usize = 1 + 2 + 1 + 1;
@@ -24,10 +26,86 @@ const OP_INSERT: u8 = 0;
 const OP_UPDATE: u8 = 1;
 const OP_DELETE: u8 = 2;
 
+const HELLO_FROM_START: u8 = 1;
+const HELLO_TO_END: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioMessage {
     Write(WriteFrame),
-    Hello { from: PeerId, cursors: Cursors },
+    Hello(Hello),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hello {
+    pub from: PeerId,
+    pub cursors: BTreeMap<PeerId, u64>,
+    pub from_start: bool,
+    pub to_end: bool,
+}
+
+impl Hello {
+    pub fn window(from: PeerId, ours: &Cursors, start: Option<PeerId>) -> Self {
+        let sorted: BTreeMap<PeerId, u64> =
+            ours.iter().map(|(origin, seq)| (*origin, *seq)).collect();
+        let first =
+            start.and_then(|key| sorted.range(..=key).next_back().map(|(origin, _)| *origin));
+        let cursors: BTreeMap<PeerId, u64> = match first {
+            Some(first) => sorted
+                .range(first..)
+                .take(HELLO_CURSORS)
+                .map(|(origin, seq)| (*origin, *seq))
+                .collect(),
+            None => sorted
+                .iter()
+                .take(HELLO_CURSORS)
+                .map(|(origin, seq)| (*origin, *seq))
+                .collect(),
+        };
+        Self {
+            from,
+            from_start: cursors.keys().next() == sorted.keys().next(),
+            to_end: cursors.keys().next_back() == sorted.keys().next_back(),
+            cursors,
+        }
+    }
+
+    pub fn next_start(&self) -> Option<PeerId> {
+        match self.to_end {
+            true => None,
+            false => self.cursors.keys().next_back().copied(),
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.from_start && self.to_end
+    }
+
+    pub fn covers(&self, origin: &PeerId) -> bool {
+        let after_first = self.from_start
+            || self
+                .cursors
+                .keys()
+                .next()
+                .is_some_and(|first| origin >= first);
+        let before_last = self.to_end
+            || self
+                .cursors
+                .keys()
+                .next_back()
+                .is_some_and(|last| origin <= last);
+        after_first && before_last
+    }
+
+    pub fn cursor(&self, origin: &PeerId) -> Option<u64> {
+        self.covers(origin)
+            .then(|| self.cursors.get(origin).copied().unwrap_or(0))
+    }
+
+    pub fn their_cursors(&self, ours: &Cursors) -> Cursors {
+        ours.iter()
+            .map(|(origin, seq)| (*origin, self.cursor(origin).unwrap_or(*seq)))
+            .collect()
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -58,6 +136,12 @@ pub enum RadioError {
     BadFragment { index: u8, count: u8 },
     #[error("hello declares {declared} cursors but carries {carried}")]
     CursorCount { declared: u8, carried: usize },
+    #[error("unknown hello flags {0:#04x}")]
+    HelloFlags(u8),
+    #[error("hello cursors are not in strictly ascending origin order")]
+    CursorOrder,
+    #[error("hello without cursors must cover every origin")]
+    EmptyWindow,
 }
 
 #[derive(BeBytes, Debug, Clone, PartialEq)]
@@ -112,6 +196,7 @@ struct CursorWire {
 #[derive(BeBytes, Debug, Clone, PartialEq)]
 struct HelloWire {
     from: [u8; 32],
+    flags: u8,
     count: u8,
     #[FromField(count)]
     cursors: Vec<CursorWire>,
@@ -121,7 +206,7 @@ impl RadioMessage {
     pub fn encode(&self) -> Result<Vec<u8>, RadioError> {
         let (kind, body) = match self {
             RadioMessage::Write(frame) => (WRITE, encode_write(frame)?),
-            RadioMessage::Hello { from, cursors } => (HELLO, encode_hello(from, cursors)?),
+            RadioMessage::Hello(hello) => (HELLO, encode_hello(hello)?),
         };
         let mut bytes = vec![kind];
         bytes.extend_from_slice(&body);
@@ -305,21 +390,26 @@ fn decode_write(bytes: &[u8]) -> Result<WriteFrame, RadioError> {
     })
 }
 
-fn encode_hello(from: &PeerId, cursors: &Cursors) -> Result<Vec<u8>, RadioError> {
-    let count =
-        u8::try_from(cursors.len()).map_err(|_| RadioError::TooManyCursors(cursors.len()))?;
-    let mut entries: Vec<CursorWire> = cursors
-        .iter()
-        .map(|(origin, seq)| CursorWire {
-            origin: *origin,
-            seq: *seq,
-        })
-        .collect();
-    entries.sort_by_key(|entry| entry.origin);
+fn encode_hello(hello: &Hello) -> Result<Vec<u8>, RadioError> {
+    let count = u8::try_from(hello.cursors.len())
+        .map_err(|_| RadioError::TooManyCursors(hello.cursors.len()))?;
+    let flags = (if hello.from_start {
+        HELLO_FROM_START
+    } else {
+        0
+    }) | (if hello.to_end { HELLO_TO_END } else { 0 });
     Ok(HelloWire {
-        from: *from,
+        from: hello.from,
+        flags,
         count,
-        cursors: entries,
+        cursors: hello
+            .cursors
+            .iter()
+            .map(|(origin, seq)| CursorWire {
+                origin: *origin,
+                seq: *seq,
+            })
+            .collect(),
     }
     .to_be_bytes())
 }
@@ -332,14 +422,30 @@ fn decode_hello(bytes: &[u8]) -> Result<RadioMessage, RadioError> {
             carried: wire.cursors.len(),
         });
     }
-    Ok(RadioMessage::Hello {
+    if wire.flags & !(HELLO_FROM_START | HELLO_TO_END) != 0 {
+        return Err(RadioError::HelloFlags(wire.flags));
+    }
+    if !wire
+        .cursors
+        .windows(2)
+        .all(|pair| pair[0].origin < pair[1].origin)
+    {
+        return Err(RadioError::CursorOrder);
+    }
+    let hello = Hello {
         from: wire.from,
+        from_start: wire.flags & HELLO_FROM_START != 0,
+        to_end: wire.flags & HELLO_TO_END != 0,
         cursors: wire
             .cursors
             .into_iter()
             .map(|entry| (entry.origin, entry.seq))
             .collect(),
-    })
+    };
+    if hello.cursors.is_empty() && !hello.is_complete() {
+        return Err(RadioError::EmptyWindow);
+    }
+    Ok(RadioMessage::Hello(hello))
 }
 
 fn compact_body(entity: &str, data: &[u8]) -> Option<Vec<u8>> {
@@ -673,15 +779,145 @@ mod tests {
         }
     }
 
+    fn hello(from_start: bool, to_end: bool, cursors: &[(u8, u64)]) -> Hello {
+        Hello {
+            from: peer(1),
+            cursors: cursors.iter().map(|(n, seq)| (peer(*n), *seq)).collect(),
+            from_start,
+            to_end,
+        }
+    }
+
+    fn origins(count: u8) -> Cursors {
+        (0..count)
+            .map(|n| (peer(10 + 2 * n), u64::from(n) + 1))
+            .collect()
+    }
+
     #[test]
     fn hello_round_trips_cursors() {
-        let hello = RadioMessage::Hello {
-            from: peer(1),
-            cursors: [(peer(1), 12), (peer(2), 7)].into_iter().collect(),
+        let message = RadioMessage::Hello(hello(true, false, &[(1, 12), (2, 7)]));
+        let bytes = message.encode().expect("encode");
+        assert_eq!(bytes.len(), 1 + 32 + 1 + 1 + 2 * 40);
+        assert_eq!(RadioMessage::decode(&bytes).expect("decode"), message);
+    }
+
+    #[test]
+    fn full_window_fits_one_radio_payload() {
+        let window = Hello::window(peer(1), &origins(9), None);
+        assert_eq!(window.cursors.len(), HELLO_CURSORS);
+        let bytes = RadioMessage::Hello(window).encode().expect("encode");
+        assert_eq!(bytes.len(), 1 + 32 + 1 + 1 + HELLO_CURSORS * 40);
+        assert!(bytes.len() <= LIMIT);
+    }
+
+    #[test]
+    fn few_origins_make_one_complete_hello() {
+        for count in 0..=5 {
+            let ours = origins(count);
+            let window = Hello::window(peer(1), &ours, None);
+            assert!(window.is_complete(), "{count} origins");
+            assert_eq!(window.next_start(), None);
+            assert_eq!(window.their_cursors(&ours), ours);
+        }
+    }
+
+    #[test]
+    fn rotation_covers_every_origin_and_every_gap_between_them() {
+        let ours = origins(12);
+        let mut start = None;
+        let mut windows = Vec::new();
+        loop {
+            let window = Hello::window(peer(1), &ours, start);
+            assert!(window.cursors.len() <= HELLO_CURSORS);
+            start = window.next_start();
+            windows.push(window);
+            if start.is_none() {
+                break;
+            }
+        }
+        assert_eq!(windows.len(), 3);
+        assert!(windows[0].from_start && !windows[0].to_end);
+        assert!(!windows[2].from_start && windows[2].to_end);
+        for n in 0..=40 {
+            let origin = peer(n);
+            let covering: Vec<&Hello> = windows.iter().filter(|w| w.covers(&origin)).collect();
+            assert!(!covering.is_empty(), "origin {n} never covered");
+            for window in covering {
+                assert_eq!(
+                    window.cursor(&origin),
+                    Some(ours.get(&origin).copied().unwrap_or(0))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn origins_outside_the_window_are_not_resent() {
+        let ours = origins(8);
+        let window = Hello::window(peer(1), &ours, None);
+        let theirs = window.their_cursors(&ours);
+        for (origin, seq) in &ours {
+            match window.covers(origin) {
+                true => assert_eq!(theirs.get(origin), window.cursors.get(origin)),
+                false => assert_eq!(theirs.get(origin), Some(seq)),
+            }
+        }
+        let partial = hello(false, false, &[(12, 3), (16, 1)]);
+        let receiver: Cursors = [(peer(11), 9), (peer(14), 4), (peer(20), 5)]
+            .into_iter()
+            .collect();
+        let theirs = partial.their_cursors(&receiver);
+        assert_eq!(theirs.get(&peer(11)), Some(&9));
+        assert_eq!(theirs.get(&peer(14)), Some(&0));
+        assert_eq!(theirs.get(&peer(20)), Some(&5));
+    }
+
+    #[test]
+    fn window_started_at_a_gap_covers_that_origin() {
+        let ours = origins(12);
+        for n in 0..=40 {
+            let origin = peer(n);
+            let window = Hello::window(peer(1), &ours, Some(origin));
+            assert!(window.covers(&origin), "origin {n}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_hello_windows() {
+        let decode = |message: Hello| {
+            RadioMessage::decode(&RadioMessage::Hello(message).encode().expect("encode"))
         };
-        let bytes = hello.encode().expect("encode");
-        assert_eq!(bytes.len(), 1 + 32 + 1 + 2 * 40);
-        assert_eq!(RadioMessage::decode(&bytes).expect("decode"), hello);
+        assert_eq!(
+            decode(hello(false, true, &[])),
+            Err(RadioError::EmptyWindow)
+        );
+        assert_eq!(
+            decode(hello(true, false, &[])),
+            Err(RadioError::EmptyWindow)
+        );
+        assert!(decode(hello(true, true, &[])).is_ok());
+        let bytes = RadioMessage::Hello(hello(true, true, &[(1, 12), (2, 7)]))
+            .encode()
+            .expect("encode");
+        let mut flagged = bytes.clone();
+        flagged[33] = 4;
+        assert_eq!(
+            RadioMessage::decode(&flagged),
+            Err(RadioError::HelloFlags(4))
+        );
+        let mut duplicated = bytes.clone();
+        duplicated[35 + 40..35 + 40 + 32].copy_from_slice(&peer(1));
+        assert_eq!(
+            RadioMessage::decode(&duplicated),
+            Err(RadioError::CursorOrder)
+        );
+        let mut reversed = bytes;
+        reversed[35..35 + 32].copy_from_slice(&peer(3));
+        assert_eq!(
+            RadioMessage::decode(&reversed),
+            Err(RadioError::CursorOrder)
+        );
     }
 
     #[test]
@@ -697,12 +933,9 @@ mod tests {
         let write = RadioMessage::Write(frame(ENTITY, stored(&position())))
             .encode()
             .expect("encode");
-        let hello = RadioMessage::Hello {
-            from: peer(1),
-            cursors: [(peer(1), 12), (peer(2), 7)].into_iter().collect(),
-        }
-        .encode()
-        .expect("encode");
+        let hello = RadioMessage::Hello(hello(true, true, &[(1, 12), (2, 7)]))
+            .encode()
+            .expect("encode");
         for bytes in [&write, &hello] {
             for cut in 1..bytes.len() {
                 assert!(RadioMessage::decode(&bytes[..cut]).is_err(), "cut at {cut}");
