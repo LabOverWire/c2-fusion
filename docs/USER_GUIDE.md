@@ -106,11 +106,11 @@ For each claim below, run the command and check the stated signal. The point is 
 
 ## Reading the MQDB peer registry (how to interpret `_expires_at`)
 
-Each peer record carries `_expires_at`, a unix-seconds lease. A peer is live only while `_expires_at` is greater than the current time. `evidence.sh` prints `now=<epoch>` just above each registry dump so you can compare directly.
+Each peer record carries `lease_secs` and `_expires_at`, a unix-seconds lease the peer stamps from its own clock. `evidence.sh` prints `now=<epoch>` just above each registry dump so you can compare directly; on one host the clocks agree, so `_expires_at` behind `now` means the lease has lapsed.
 
-The nodes here use a six-second demo lease and renew it on a heartbeat. While a node is connected, its `_expires_at` keeps advancing ahead of `now` and its `_version` keeps incrementing. When edge is partitioned it can no longer renew, so its `_expires_at` stops advancing and falls behind `now` (the lease has lapsed) and its `_version` freezes. Relay and hq, still connected, show `_expires_at` in the future and rising `_version`. On reconnection edge renews, so its `_expires_at` and `_version` advance again. That contrast, lapsed versus fresh in the same dump, is the presence mechanism working.
+The nodes here use a six-second demo lease and renew it on a heartbeat every two seconds. While a node is connected, its `_expires_at` keeps advancing ahead of `now` and its `_version` keeps incrementing. When edge is partitioned it can no longer renew, so its `_expires_at` stops advancing and falls behind `now` (the lease has lapsed) and its `_version` freezes. Relay and hq, still connected, show `_expires_at` in the future and rising `_version`. On reconnection edge renews, so its `_expires_at` and `_version` advance again. That contrast, lapsed versus fresh in the same dump, is the presence mechanism working.
 
-The broker also sweeps expired records on its own timer (roughly every 60 seconds), which is coarser than the lease, so the authoritative fast signal is the client-side check that `_expires_at` is still in the future.
+Discovery does not compare `_expires_at` with its own clock. Each node lists a peer while it has seen that peer's `_expires_at` change within the last `lease_secs`, timed by its own monotonic clock, so skew between node clocks neither hides a live peer nor keeps a dead one. The broker sweeps expired records on its own timer (roughly every 60 seconds), which is coarser than the lease, so this client-side check is the fast signal. Each node's MQTT keepalive is a third of its lease (two seconds here), so the broker also notices a partitioned node's connection end within about three to five seconds.
 
 ## Monitoring (optional)
 
