@@ -6,6 +6,6 @@ FROM alpine:3.20
 COPY --from=src /mqdb /usr/local/bin/mqdb
 RUN mkdir -p /data /auth \
  && /usr/local/bin/mqdb passwd c2 -b c2pass -n > /auth/passwd.txt \
- && printf 'user c2 topic $DB/# permission readwrite\nuser c2 topic p2p/# permission readwrite\nuser c2 topic +/responses permission readwrite\n' > /auth/acl.txt
+ && printf 'user c2 topic $DB/# permission readwrite\nuser c2 topic p2p/# permission readwrite\nuser c2 topic mqp2p/responses/# permission readwrite\nuser c2 topic mqdb-cli/responses/# permission readwrite\n' > /auth/acl.txt
 WORKDIR /data
 ENTRYPOINT ["/usr/local/bin/mqdb"]
