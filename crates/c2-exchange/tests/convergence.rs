@@ -166,7 +166,8 @@ async fn picture_keeps_readable_messages_beside_unreadable_records() {
     store
         .node()
         .local_write(Op::Insert, ENTITY, "NOT-JSON", b"\xff\x00".to_vec())
-        .await;
+        .await
+        .expect("local write");
 
     let pic = picture(&store).await;
     assert_eq!(pic.messages.len(), 1);

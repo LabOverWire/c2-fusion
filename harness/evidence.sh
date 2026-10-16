@@ -7,7 +7,7 @@ trap cleanup EXIT
 hr() { printf '\n========== %s ==========\n' "$1"; }
 
 mqdb_peers() {
-    echo "now=$(date +%s) (presence lease: a peer is live only while its _expires_at > now)"
+    echo "now=$(date +%s) (presence lease: on one host, _expires_at behind now means no renewal for a whole lease)"
     docker run --rm --network c2net mqdb-run:poc \
         list peers --broker mqdb:1883 --user c2 --pass c2pass 2>&1 || true
 }

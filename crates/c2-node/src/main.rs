@@ -514,7 +514,8 @@ mod tests {
         let frame = store
             .node()
             .local_write(Op::Insert, ENTITY, "C-2", json(&contact("C-2")))
-            .await;
+            .await
+            .expect("local write");
         assert_eq!(frame.seq, 2);
     }
 
@@ -569,7 +570,8 @@ mod tests {
         store
             .node()
             .local_write(Op::Insert, ENTITY, "BAD", b"{}".to_vec())
-            .await;
+            .await
+            .expect("local write");
         let line = picture_line("edge", &picture(&store).await).expect("line");
         assert_eq!(line, format!("{clean} unreadable=BAD"));
     }

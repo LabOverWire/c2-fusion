@@ -31,7 +31,7 @@ c2-hq reconverged to 4
 DEMO PASSED: MQDB discovery, converge, degrade, partition, inject, reconverge
 ```
 
-`evidence.sh` captures the same sequence with the MQDB peer registry at each phase. With the demo lease of 6 seconds, the registry during the partition shows edge's lease lapsed while the connected nodes stay fresh (a peer is live only while `_expires_at > now`):
+`evidence.sh` captures the same sequence with the MQDB peer registry at each phase. With the demo lease of 6 seconds, the registry during the partition shows edge's lease lapsed while the connected nodes stay fresh (on one host the clocks agree, so `_expires_at` behind `now` means no renewal for a whole lease):
 
 ```
 now=1790874816
@@ -48,11 +48,27 @@ Each node uses `mqp2p::Peer` to register with the MQDB broker and discover peers
 
 ## Presence lease
 
-Each registration carries an `_expires_at` lease (MQDB's TTL field, in unix seconds). A node renews it on a heartbeat at a third of the lease, and `list_peers` filters out any peer whose lease has lapsed, so discovery reflects liveness rather than leaving a node that has gone away as a stale `online` entry. A node isolated past its lease stops renewing and drops out of discovery; on reconnect it renews (or, if the record was already swept, re-creates it under the same id) and reappears. The nodes here use a 6-second demo lease so the lapse is visible within the partition window (`C2_LEASE_SECS` changes it); the library default is 15 seconds. Client-side filtering is load-bearing because MQDB's own TTL sweep is coarser (about 60 seconds), and it compares each reader's clock to the writer's stamp, so nodes are assumed to be roughly clock-synced.
+Each registration carries `lease_secs` and an `_expires_at` lease (MQDB's TTL field, in unix seconds). A node renews it on a heartbeat at a third of the lease, and `list_peers` lists a peer only while it has seen that peer's `_expires_at` change within the last `lease_secs`, timed by its own monotonic clock, so discovery reflects liveness rather than leaving a node that has gone away as a stale `online` entry, and does not depend on the nodes' clocks agreeing. A node isolated past its lease stops renewing and drops out of discovery; on reconnect it renews (or, if the record was already swept, re-creates it under the same id) and reappears. The nodes here use a 6-second demo lease so the lapse is visible within the partition window (`C2_LEASE_SECS` changes it); the library default is 15 seconds. Client-side filtering is load-bearing because MQDB's own TTL sweep is coarser (about 60 seconds). Each node's MQTT keepalive is a third of its lease (2 seconds here), so the broker sees a partitioned node's connection end within about 3 to 5 seconds; `presence.sh` measures that.
+
+## Broker presence
+
+The broker runs with `--presence`, so it publishes a retained event on `$DB/_presence/<client id>` each time a node's MQTT connection opens or closes. `./presence.sh` subscribes to that feed and times each event from the moment it acts on a node. Run on 2026-10-16:
+
+```
+scenario                         event        after    unexpected
+docker stop relay (SIGTERM)      disconnect   0.19 s   false
+docker start relay               connect      0.31 s
+docker kill hq (SIGKILL)         disconnect   0.19 s   true
+docker start hq                  connect      0.33 s
+edge partitioned at the router   disconnect   3.37 s   true
+edge partition healed            connect      1.99 s
+```
+
+A stopped node sends MQTT `DISCONNECT`, so its event is not marked unexpected. A killed container's socket is closed by the kernel, so the broker sees it at once; a node that loses power or its link behaves like the partition instead. The partition is noticed after 1.5 to 2.5 keepalives of silence, 3 to 5 s with the 2 s keepalive here; with mqtt5's 60 s default keepalive the same partition took 114.9 s. The nodes do not consume the feed yet; `PeerConfig::with_presence` in mqp2p would let discovery drop a disconnected peer before its lease lapses.
 
 ## Broker image
 
-The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem), and this feature build requires an auth method. `mqdb.Dockerfile` repackages the mqdb binary onto Alpine and bakes in a POC-only password (`c2` / `c2pass`); the broker runs with `--passwd` and `--admin-users c2` and no ACL file (an ACL denied the broker's own internal `$DB/#` handler). Nodes authenticate with those credentials.
+The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem), and this feature build requires an auth method. `mqdb.Dockerfile` repackages the mqdb binary onto Alpine and bakes in a POC-only password (`c2` / `c2pass`); the broker runs with `--passwd` and `--admin-users c2` and no ACL file (an ACL denied the broker's own internal `$DB/#` handler; mqdb-cli 0.8.52, with mqdb-agent 0.8.37, fixes that, and this image is mqdb 0.8.39). Nodes authenticate with those credentials.
 
 ## Bearer shaping
 
@@ -111,7 +127,7 @@ lease  loss  from_edge           to_edge             packets      avg_bytes_pkt 
 90 s   15%   29.2 16.2 10.0%     11.8 7.1 0.0%       41 65 33     126-166        1.79 2.98 4.54
 ```
 
-Every contact converged within 4.6 seconds, with and without loss. A new write is pushed to connected peers immediately, so the pull interval governs catch-up after a partition rather than delivery latency. Without loss the 90-second lease lowers the traffic on the link from 70 to 113 packets per 30 seconds to 53 to 68; the rest is likely broker keepalives and the remaining sync exchanges, not yet broken down. With so few packets per window, the measured loss scatters widely around the configured 15 percent.
+Every contact converged within 4.6 seconds, with and without loss. A new write is pushed to connected peers immediately, so the pull interval governs catch-up after a partition rather than delivery latency. Without loss the 90-second lease lowers the traffic on the link from 70 to 113 packets per 30 seconds to 53 to 68; the rest is likely broker keepalives and the remaining sync exchanges, not yet broken down. These runs predate deriving the MQTT keepalive from the lease (it was mqtt5's 60 s default), so the packet counts with a 6 s lease now include a ping every 2 s. With so few packets per window, the measured loss scatters widely around the configured 15 percent.
 
 ## Monitoring
 

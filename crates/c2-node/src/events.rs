@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(inserted["seq"], 3);
         assert_eq!(inserted["record"]["message_type"], "ContactReport");
 
-        store.delete(ENTITY, "C-1").await;
+        store.delete(ENTITY, "C-1").await.expect("delete");
         let (_, deleted) = next(&mut lines).await;
         assert_eq!(deleted["op"], "delete");
         assert_eq!(deleted["id"], "C-1");
@@ -411,7 +411,8 @@ mod tests {
         store
             .node()
             .local_write(Op::Update, ENTITY, "C-1", b"not json".to_vec())
-            .await;
+            .await
+            .expect("local write");
         let (_, unreadable) = next(&mut lines).await;
         assert_eq!(unreadable["kind"], "unreadable");
         assert_eq!(unreadable["id"], "C-1");

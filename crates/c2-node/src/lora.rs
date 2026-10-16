@@ -675,7 +675,8 @@ mod tests {
         for seq in 1..=40 {
             let frame = node
                 .local_write(Op::Insert, "notes", format!("n-{seq}"), b"{}".to_vec())
-                .await;
+                .await
+                .expect("local write");
             exchange.accept_local(frame);
         }
         assert!(exchange.behind);
