@@ -3,7 +3,9 @@ use std::time::Duration;
 use c2_codec::json::JsonCodec;
 use c2_codec::mtf_xml::MtfXmlCodec;
 use c2_codec::{Codec, Registry};
-use c2_exchange::{ingest, ingest_wire, ingest_wire_with, picture, picture_encoded, ExchangeError};
+use c2_exchange::{
+    ingest, ingest_wire, ingest_wire_with, picture, picture_encoded, ExchangeError, Picture,
+};
 use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Sitrep};
 use stitch_p2p::{session, PeerId, Store, PEER_ID_LEN};
 use tokio::io::{split, DuplexStream};
@@ -138,5 +140,5 @@ async fn message_that_cannot_replicate_is_refused_at_ingest() {
         matches!(result, Err(ExchangeError::Invalid(_))),
         "{result:?}"
     );
-    assert!(picture(&store).await.expect("picture").is_empty());
+    assert_eq!(picture(&store).await, Picture::default());
 }

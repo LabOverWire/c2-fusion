@@ -179,3 +179,24 @@ async fn picture_keeps_readable_messages_beside_unreadable_records() {
         ["NOT-A-MESSAGE", "NOT-JSON"]
     );
 }
+
+#[tokio::test]
+async fn picture_treats_a_replicated_invalid_message_as_unreadable() {
+    let store = Store::new(peer(1));
+    ingest(&store, &contact("C-1")).await.unwrap();
+    let mut forged = serde_json::to_value(contact("C-2")).unwrap();
+    forged["latitude"] = serde_json::json!(999.0);
+    store.create(ENTITY, "C-2", forged).await.unwrap();
+
+    let pic = picture(&store).await;
+    assert_eq!(pic.messages.len(), 1, "{:?}", pic.messages.keys());
+    assert!(pic.messages.contains_key("C-1"));
+    assert_eq!(
+        pic.unreadable
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["C-2"],
+        "a record that decodes but fails validation must not enter the picture"
+    );
+}

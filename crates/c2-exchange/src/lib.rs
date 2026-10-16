@@ -58,11 +58,11 @@ pub struct Picture {
 pub async fn picture(store: &Store) -> Picture {
     let mut picture = Picture::default();
     for (id, data, _) in store.node().entries_with_authors(ENTITY).await {
-        match serde_json::from_slice(&data) {
-            Ok(msg) => {
+        match serde_json::from_slice::<C2Message>(&data) {
+            Ok(msg) if msg.validate().is_ok() => {
                 picture.messages.insert(id, msg);
             }
-            Err(_) => {
+            _ => {
                 picture.unreadable.insert(id);
             }
         }
