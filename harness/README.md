@@ -56,15 +56,15 @@ The broker runs with `--presence`, so it publishes a retained event on `$DB/_pre
 
 ```
 scenario                         event        after    unexpected
-docker stop relay (SIGTERM)      disconnect   0.19 s   false
-docker start relay               connect      0.31 s
-docker kill hq (SIGKILL)         disconnect   0.19 s   true
-docker start hq                  connect      0.33 s
-edge partitioned at the router   disconnect   3.37 s   true
-edge partition healed            connect      1.99 s
+docker stop relay (SIGTERM)      disconnect   0.08 s   false
+docker start relay               connect      0.17 s
+docker kill hq (SIGKILL)         disconnect   0.04 s   true
+docker start hq                  connect      0.17 s
+edge partitioned at the router   disconnect   3.20 s   true
+edge partition healed            connect      1.78 s
 ```
 
-A stopped node sends MQTT `DISCONNECT`, so its event is not marked unexpected. A killed container's socket is closed by the kernel, so the broker sees it at once; a node that loses power or its link behaves like the partition instead. The partition is noticed after 1.5 to 2.5 keepalives of silence, 3 to 5 s with the 2 s keepalive here; with mqtt5's 60 s default keepalive the same partition took 114.9 s. The nodes do not consume the feed yet; `PeerConfig::with_presence` in mqp2p would let discovery drop a disconnected peer before its lease lapses.
+On SIGTERM a node calls mqp2p's `Peer::disconnect`, which removes its registry entry and sends MQTT `DISCONNECT`, so its event is not marked unexpected and the other nodes stop discovering it without waiting for its lease. A killed container's socket is closed by the kernel, so the broker sees it at once; a node that loses power or its link behaves like the partition instead. The partition is noticed after 1.5 to 2.5 keepalives of silence, 3 to 5 s with the 2 s keepalive here; with mqtt5's 60 s default keepalive the same partition took 114.9 s. The nodes do not consume the feed yet; `PeerConfig::with_presence` in mqp2p would let discovery drop a disconnected peer before its lease lapses.
 
 ## Broker image
 
