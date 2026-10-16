@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use c2_codec::{Codec, CodecError, Registry};
 use c2_model::{C2Message, InvalidMessage};
@@ -49,12 +49,25 @@ pub async fn ingest_wire_with(
     ingest_wire(store, codec, bytes).await
 }
 
-pub async fn picture(store: &Store) -> Result<HashMap<String, C2Message>, ExchangeError> {
-    let mut out = HashMap::new();
-    for (id, value) in store.entries(ENTITY).await {
-        out.insert(id, serde_json::from_value(value)?);
+#[derive(Debug, Default, PartialEq)]
+pub struct Picture {
+    pub messages: HashMap<String, C2Message>,
+    pub unreadable: BTreeSet<String>,
+}
+
+pub async fn picture(store: &Store) -> Picture {
+    let mut picture = Picture::default();
+    for (id, data, _) in store.node().entries_with_authors(ENTITY).await {
+        match serde_json::from_slice::<C2Message>(&data) {
+            Ok(msg) if msg.validate().is_ok() => {
+                picture.messages.insert(id, msg);
+            }
+            _ => {
+                picture.unreadable.insert(id);
+            }
+        }
     }
-    Ok(out)
+    picture
 }
 
 pub async fn picture_encoded(
@@ -62,7 +75,7 @@ pub async fn picture_encoded(
     codec: &dyn Codec,
 ) -> Result<HashMap<String, Vec<u8>>, ExchangeError> {
     let mut out = HashMap::new();
-    for (id, msg) in picture(store).await? {
+    for (id, msg) in picture(store).await.messages {
         out.insert(id, codec.encode(&msg)?);
     }
     Ok(out)

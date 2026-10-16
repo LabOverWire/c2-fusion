@@ -36,6 +36,7 @@ services:
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
+      C2_STORE_DIR: /var/lib/c2/store
       C2_INGEST_FMT: mtf-xml
       C2_INGEST_FILE: /messages/edge.json
       C2_INBOX: /inbox
@@ -68,6 +69,7 @@ services:
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
+      C2_STORE_DIR: /var/lib/c2/store
       C2_INGEST_FMT: c2-json
       C2_INGEST_FILE: /messages/relay.json
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"
@@ -96,6 +98,7 @@ services:
       C2_BROKER_USER: c2
       C2_BROKER_PASS: c2pass
       C2_LISTEN: 0.0.0.0:9000
+      C2_STORE_DIR: /var/lib/c2/store
       C2_INGEST_FMT: c2-json
       C2_INGEST_FILE: /messages/hq.json
       C2_PICTURE_INTERVAL_MS: "${C2_PICTURE_INTERVAL_MS:-1000}"

@@ -8,7 +8,7 @@ import sys
 import time
 from collections import Counter
 
-SCHEMA = 1
+SCHEMA = 2
 
 
 def canonical(record):
@@ -60,6 +60,9 @@ class Mirror:
                 f"origin={line['origin']} type={message_type} at={line['at']}",
                 flush=True,
             )
+        elif kind == "unreadable":
+            self.picture.pop(line["id"], None)
+            print(f"UNREADABLE node={self.node} seq={line['seq']} id={line['id']} origin={line['origin']} error={line['error']}", flush=True)
         elif kind == "resync":
             print(f"RESYNC node={self.node} missed={line['missed']}", flush=True)
             self.picture.clear()

@@ -35,6 +35,7 @@ pub struct Metrics {
     peer_lease: Gauge<u64>,
     cursor: Gauge<u64>,
     picture_records: Gauge<u64>,
+    picture_unreadable: Gauge<u64>,
     picture_digest: Gauge<u64>,
 }
 
@@ -75,6 +76,12 @@ impl Metrics {
             picture_records: meter
                 .u64_gauge("c2.picture.records")
                 .with_description("Messages in this node's common operational picture")
+                .build(),
+            picture_unreadable: meter
+                .u64_gauge("c2.picture.unreadable")
+                .with_description(
+                    "Records in the store that are not readable C2 messages and are left out of the picture",
+                )
                 .build(),
             picture_digest: meter
                 .u64_gauge("c2.picture.digest")
@@ -262,17 +269,14 @@ impl Sampler {
     }
 
     async fn picture(&self) {
-        let entries = match picture(&self.store).await {
-            Ok(entries) => entries,
-            Err(error) => {
-                eprintln!("TELEMETRY picture failed: {error}");
-                return;
-            }
-        };
-        let sorted: BTreeMap<&String, &C2Message> = entries.iter().collect();
+        let picture = picture(&self.store).await;
+        let sorted: BTreeMap<&String, &C2Message> = picture.messages.iter().collect();
         self.metrics
             .picture_records
             .record(sorted.len() as u64, &[]);
+        self.metrics
+            .picture_unreadable
+            .record(picture.unreadable.len() as u64, &[]);
         match picture_digest(&sorted) {
             Ok(digest) => self
                 .metrics

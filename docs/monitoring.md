@@ -48,6 +48,7 @@ This is lag in writes, not seconds. Sequences are per origin and only grow, so t
 | Metric | Type | Attributes | Meaning |
 |---|---|---|---|
 | `c2.picture.records` (`c2_picture_records`) | gauge | | Messages in this node's common operational picture. |
+| `c2.picture.unreadable` (`c2_picture_unreadable`) | gauge | | Records in the store that are not readable C2 messages. They are left out of the picture, its record count and its digest, and listed on the `PICTURE` line as `unreadable=`. Non-zero needs attention: a node is writing records the others cannot read. |
 | `c2.picture.digest` (`c2_picture_digest`) | gauge | | First 32 bits of the SHA-256 of the node's picture, the same digest the node logs on its `PICTURE` line. Equal values mean equal pictures. |
 
 The system is converged when every node reports the same digest:

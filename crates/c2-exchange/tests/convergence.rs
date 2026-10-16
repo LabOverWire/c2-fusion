@@ -1,14 +1,8 @@
-//! Shared-picture convergence across peer-to-peer nodes, including a link
-//! partition and rejoin. Nodes exchange C2 messages over an in-memory pipe via
-//! the stitch-p2p session protocol; the same mechanism runs over QUIC in the
-//! DDIL harness. Convergence itself is machine-checked in the stitch-p2p TLA+
-//! specs (InvConvergence); these tests exercise the C2 mapping on top of it.
-
 use std::time::Duration;
 
-use c2_exchange::{ingest, picture};
+use c2_exchange::{ingest, picture, ENTITY};
 use c2_model::{C2Message, ContactReport, Domain, FunctionalService, Rfi, Sitrep};
-use stitch_p2p::{session, PeerId, Store, PEER_ID_LEN};
+use stitch_p2p::{session, Op, PeerId, Store, PEER_ID_LEN};
 use tokio::io::{split, DuplexStream};
 use tokio::task::JoinHandle;
 
@@ -103,8 +97,8 @@ async fn two_nodes_converge_on_shared_picture() {
     let handles = connect(&edge, edge_io, &hq, hq_io);
 
     let converged = wait_until(Duration::from_secs(3), || async {
-        picture(&edge).await.unwrap() == picture(&hq).await.unwrap()
-            && picture(&edge).await.unwrap().len() == 2
+        picture(&edge).await.messages == picture(&hq).await.messages
+            && picture(&edge).await.messages.len() == 2
     })
     .await;
     for h in &handles {
@@ -112,7 +106,7 @@ async fn two_nodes_converge_on_shared_picture() {
     }
 
     assert!(converged, "nodes did not converge on the shared picture");
-    let pic = picture(&edge).await.unwrap();
+    let pic = picture(&edge).await.messages;
     assert_eq!(pic.get("C-1"), Some(&contact("C-1")));
     assert_eq!(pic.get("S-1"), Some(&sitrep("S-1")));
 }
@@ -127,29 +121,26 @@ async fn picture_converges_after_partition_and_rejoin() {
     let handles = connect(&edge, edge_io, &hq, hq_io);
 
     let first = wait_until(Duration::from_secs(3), || async {
-        picture(&hq).await.unwrap().contains_key("C-1")
+        picture(&hq).await.messages.contains_key("C-1")
     })
     .await;
     assert!(first, "initial replication failed before partition");
 
-    // Partition: drop both sessions. Each node keeps writing while cut off.
     for h in &handles {
         h.abort();
     }
     ingest(&edge, &contact("C-2")).await.unwrap();
     ingest(&hq, &rfi("R-1")).await.unwrap();
 
-    // During the partition neither node has the other's new write.
-    assert!(!picture(&edge).await.unwrap().contains_key("R-1"));
-    assert!(!picture(&hq).await.unwrap().contains_key("C-2"));
+    assert!(!picture(&edge).await.messages.contains_key("R-1"));
+    assert!(!picture(&hq).await.messages.contains_key("C-2"));
 
-    // Rejoin over a fresh link.
     let (edge_io2, hq_io2) = tokio::io::duplex(64 * 1024);
     let handles2 = connect(&edge, edge_io2, &hq, hq_io2);
 
     let converged = wait_until(Duration::from_secs(3), || async {
-        let a = picture(&edge).await.unwrap();
-        let b = picture(&hq).await.unwrap();
+        let a = picture(&edge).await.messages;
+        let b = picture(&hq).await.messages;
         a == b && a.len() == 3
     })
     .await;
@@ -158,8 +149,54 @@ async fn picture_converges_after_partition_and_rejoin() {
     }
 
     assert!(converged, "picture did not converge after rejoin");
-    let pic = picture(&hq).await.unwrap();
+    let pic = picture(&hq).await.messages;
     assert!(pic.contains_key("C-1"));
     assert!(pic.contains_key("C-2"));
     assert!(pic.contains_key("R-1"));
+}
+
+#[tokio::test]
+async fn picture_keeps_readable_messages_beside_unreadable_records() {
+    let store = Store::new(peer(1));
+    ingest(&store, &contact("C-1")).await.unwrap();
+    store
+        .create(ENTITY, "NOT-A-MESSAGE", serde_json::json!({"foo": 1}))
+        .await
+        .unwrap();
+    store
+        .node()
+        .local_write(Op::Insert, ENTITY, "NOT-JSON", b"\xff\x00".to_vec())
+        .await;
+
+    let pic = picture(&store).await;
+    assert_eq!(pic.messages.len(), 1);
+    assert_eq!(pic.messages.get("C-1"), Some(&contact("C-1")));
+    assert_eq!(
+        pic.unreadable
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["NOT-A-MESSAGE", "NOT-JSON"]
+    );
+}
+
+#[tokio::test]
+async fn picture_treats_a_replicated_invalid_message_as_unreadable() {
+    let store = Store::new(peer(1));
+    ingest(&store, &contact("C-1")).await.unwrap();
+    let mut forged = serde_json::to_value(contact("C-2")).unwrap();
+    forged["latitude"] = serde_json::json!(999.0);
+    store.create(ENTITY, "C-2", forged).await.unwrap();
+
+    let pic = picture(&store).await;
+    assert_eq!(pic.messages.len(), 1, "{:?}", pic.messages.keys());
+    assert!(pic.messages.contains_key("C-1"));
+    assert_eq!(
+        pic.unreadable
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["C-2"],
+        "a record that decodes but fails validation must not enter the picture"
+    );
 }

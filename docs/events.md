@@ -4,7 +4,7 @@
 
 ## Interface
 
-The stream is off unless `C2_EVENTS_LISTEN` is set to a TCP address (for example `127.0.0.1:7600`, or `0.0.0.0:7600` inside a container). Each client that connects receives newline-delimited JSON, one object per line, in UTF-8. The node writes and never reads; a client disconnects by closing the connection. Up to 8 clients can be connected at once; further connections are closed immediately.
+The stream is off unless `C2_EVENTS_LISTEN` is set to a TCP address (for example `127.0.0.1:7600`, or `0.0.0.0:7600` inside a container). Each client that connects receives newline-delimited JSON, one object per line, in UTF-8. The node writes and never reads; a client disconnects by closing the connection. Up to 8 clients can be connected at once; further connections are closed immediately. A client that stops reading is disconnected once a write to it has waited 10 seconds, so it frees its place.
 
 There is no authentication or encryption on the socket. Bind it to localhost, or to a trusted management interface, so that only co-located or management-network consumers can read the picture.
 
@@ -14,11 +14,12 @@ Every line has `seq`, a counter that starts at 0 for each connection and rises b
 
 | `kind` | Fields | Meaning |
 |---|---|---|
-| `hello` | `node`, `schema` | First line. `node` is the node's name (`C2_NAME`); `schema` is the version of this line format, currently 1. |
+| `hello` | `node`, `schema` | First line. `node` is the node's name (`C2_NAME`); `schema` is the version of this line format, currently 2. |
 | `snapshot` | `id`, `origin`, `record` | One message of the current picture, in id order. `origin` is `local` when this node wrote the winning version, `remote` when it arrived by replication. |
-| `ready` | `count`, `at` | End of the snapshot: `count` snapshot lines were sent. From here on the client holds the node's picture as of `at`. |
+| `ready` | `count`, `at` | End of the snapshot: `count` snapshot and `unreadable` lines were sent. From here on the client holds the node's picture as of `at`. |
 | `change` | `op`, `id`, `origin`, `at`, `record` | A change to the picture. `op` is `insert`, `update` or `delete`; `record` is `null` for a delete. `at` is the node's time when it forwarded the change (RFC 3339, milliseconds). |
 | `resync` | `missed` | The client fell behind the node's event buffer and `missed` changes were dropped. A fresh snapshot and `ready` follow; the client discards its copy and rebuilds from them. |
+| `unreadable` | `id`, `origin`, `error` | The store holds a record under `id` that is not a readable C2 message (for example one written by a peer with a different model version). It is not part of the picture: the client drops `id` from its copy. Sent in place of a `snapshot` line, or of a `change` line when a change leaves such a record. `error` says why it could not be read. |
 
 `record` is the message in the canonical `c2-json` form (the canonical model as plain JSON, field order as the model defines it), so a consumer never deals with MTF, NIEM, COIE text or the compact radio encoding, whatever format the message arrived in. A confidentiality label, when present, is the record's `label` field.
 
@@ -35,7 +36,7 @@ Example (shortened):
 
 - **No gap between snapshot and changes.** The node subscribes a client to the event stream before it reads the snapshot. A change that lands while the snapshot is being read is therefore in both, and the client applies it twice. Because every `change` carries the whole record, applying the changes in order after the snapshot ends at the node's picture.
 - **Winning changes only.** Changes come from the store's mutation events, which fire when the visible state changes, after conflict resolution. A replicated write that loses to a newer one is not sent.
-- **Bounded memory.** The node never queues for a slow client beyond its fixed event buffer (1024 changes in stitch-p2p). A client that falls further behind gets `resync` and a new snapshot instead of an unbounded backlog, and it never slows the exchange itself.
+- **Bounded memory.** The node never queues for a slow client beyond its fixed event buffer (1024 changes in stitch-p2p). A client that falls further behind gets `resync` and a new snapshot instead of an unbounded backlog, and it never slows the exchange itself. The node subscribes the client afresh before reading that snapshot, so the changes that follow are all newer than it, as after the first snapshot.
 - **Checking the copy.** A client can check that its copy equals the node's picture: serialise the copy as one JSON object from id to record, ids sorted, records exactly as received and no whitespace, and the first 4 bytes of its SHA-256 equal the digest on the node's `PICTURE` log line and in the `c2.picture.digest` metric ([monitoring.md](monitoring.md)). The reference consumer prints this digest.
 
 ## Writing back

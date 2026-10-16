@@ -4,7 +4,7 @@ Runs an MQDB broker, three c2-fusion nodes and a router as containers on two Doc
 
 ## Topology
 
-The broker, relay and hq share one network (`c2net`, 10.231.0.0/24). Edge sits alone on a second network (`c2edge`, 10.231.1.0/24) and reaches everything else through a router container attached to both, with static routes on each side. Every bearer condition is applied on the router: `netem` on both of its interfaces shapes the edge link in both directions, and taking its edge-side interface down partitions edge. Addresses are static because Docker's name resolution does not cross networks, so the nodes reach the broker at 10.231.0.2.
+The broker, relay and hq share one network (`c2net`, 10.231.0.0/24). Edge sits alone on a second network (`c2edge`, 10.231.1.0/24) and reaches everything else through a router container attached to both, with static routes on each side. Every bearer condition is applied on the router: `netem` on both of its interfaces shapes the edge link in both directions, and taking its edge-side interface down partitions edge. Addresses are static because Docker's name resolution does not cross networks, so the nodes reach the broker at 10.231.0.2. Each node keeps its store in `/var/lib/c2/store` inside its container (`C2_STORE_DIR`, which the node requires), so a container restart keeps the picture and the write sequence, and `compose down` starts the next run fresh.
 
 ## What it shows
 
@@ -14,7 +14,7 @@ The broker, relay and hq share one network (`c2net`, 10.231.0.0/24). Edge sits a
 2. Converge: the nodes connect peer-to-peer over QUIC and reach the same 3-message picture.
 3. Degrade: apply a `tc`/`netem` rate and delay profile to the edge link, in both directions; the picture holds.
 4. Partition: take the router's edge-side interface down (edge loses both the broker and its peers). While isolated it can no longer renew its presence lease, so its `$DB/peers` record expires while relay and hq keep renewing theirs.
-5. Inject: drop a new contact into edge's inbox while it is isolated. Edge ingests it locally (count 4); HQ correctly still shows 3.
+5. Inject: drop a new contact into edge's inbox while it is isolated. Edge ingests it locally (count 4); HQ correctly still shows 3. The scripts write the file under a `.tmp` name and rename it to `.json`, because the node takes any `.json` file it finds and a half-copied one would be rejected.
 6. Heal and reconverge: bring the interface back up; edge renews its lease, re-discovers through MQDB, and all three nodes reach the same 4-message picture.
 
 Last run (2026-10-11, through the router), `run.sh`:
@@ -127,21 +127,21 @@ The metrics, the queries behind these columns and the ingest paths are in [../do
 
 ## Event stream
 
-`./events.sh` turns on the event stream at edge and hq (published on 127.0.0.1:7601 and 127.0.0.1:7600), attaches the reference consumer to each, partitions edge, injects C-2 at edge, heals, and checks each consumer's picture digest against its node's `PICTURE` digest. Run on 2026-10-13:
+`./events.sh` turns on the event stream at edge and hq (published on 127.0.0.1:7601 and 127.0.0.1:7600), attaches the reference consumer to each, partitions edge, injects C-2 at edge, heals, and checks each consumer's picture digest against its node's `PICTURE` digest. Run on 2026-10-14:
 
 ```
 --- consumer on hq
-HELLO node=hq schema=1
+HELLO node=hq schema=2
 READY node=hq count=3
 CONSUMER node=hq count=3 digest=cf369d04 labelled=0 types=ContactReport:1,Rfi:1,Sitrep:1
-CHANGE node=hq seq=5 op=insert id=C-2 origin=remote type=ContactReport at=2026-10-13T19:55:25.049Z
+CHANGE node=hq seq=5 op=insert id=C-2 origin=remote type=ContactReport at=2026-10-14T21:03:37.923Z
 CONSUMER node=hq count=4 digest=fb17f9a0 labelled=0 types=ContactReport:2,Rfi:1,Sitrep:1
 hq: consumer picture digest fb17f9a0 matches the node's PICTURE digest
 --- consumer on edge
-HELLO node=edge schema=1
+HELLO node=edge schema=2
 READY node=edge count=3
 CONSUMER node=edge count=3 digest=cf369d04 labelled=0 types=ContactReport:1,Rfi:1,Sitrep:1
-CHANGE node=edge seq=5 op=insert id=C-2 origin=local type=ContactReport at=2026-10-13T19:55:14.988Z
+CHANGE node=edge seq=5 op=insert id=C-2 origin=local type=ContactReport at=2026-10-14T21:03:36.172Z
 CONSUMER node=edge count=4 digest=fb17f9a0 labelled=0 types=ContactReport:2,Rfi:1,Sitrep:1
 edge: consumer picture digest fb17f9a0 matches the node's PICTURE digest
 edge consumer saw C-2 as a local insert during the partition
@@ -149,9 +149,25 @@ hq consumer saw C-2 as a remote insert after the heal
 EVENTS PASSED: snapshot, live local and remote changes, consumer picture equals node picture
 ```
 
-Edge's consumer saw C-2 at ingest during the partition, hq's about 10 seconds later, after the heal.
+Edge's consumer saw C-2 at ingest during the partition, hq's about 2 seconds later, after the heal.
 
 The line format is in [../docs/events.md](../docs/events.md).
+
+## Restart
+
+`./restart.sh` injects C-2 at edge and waits for every node to hold it, stops edge with `docker stop`, starts it again on the same store, then injects C-3 at edge. The stop must be logged as a SIGTERM shutdown within 5 seconds (Docker otherwise kills the container after 10), edge must come back with its 4-message picture, and C-3 must reach every node. A node that restarted without its store would give C-3 a write sequence number its peers already hold for C-2, and they would drop it. Run on 2026-10-14:
+
+```
+c2-edge has C-2 (count=4)
+c2-relay has C-2 (count=4)
+c2-hq has C-2 (count=4)
+edge stopped on SIGTERM in 0s
+edge came back with its 4-message picture from the store
+c2-edge has C-3 (count=5)
+c2-relay has C-3 (count=5)
+c2-hq has C-3 (count=5)
+RESTART PASSED: SIGTERM stop, picture restored from the store, post-restart write replicated
+```
 
 ## Run it
 
@@ -161,6 +177,7 @@ The line format is in [../docs/events.md](../docs/events.md).
 ./evidence.sh
 ./monitoring.sh
 ./events.sh
+./restart.sh
 ```
 
 Requires Docker. `run.sh` and `loss.sh` build the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, the router image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), bring the stack up, run their sequence, and tear everything down; `evidence.sh` reuses the images they built.

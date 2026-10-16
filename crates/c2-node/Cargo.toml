@@ -30,3 +30,6 @@ serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 c2-gnss = { version = "0.1.0", path = "../c2-gnss" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
