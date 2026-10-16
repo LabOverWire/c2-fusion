@@ -15,7 +15,7 @@ services:
     image: mqdb-run:poc
     container_name: c2-mqdb
     cap_add: [NET_ADMIN]
-    entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/mqdb agent start --bind 0.0.0.0:1883 --db /data --passwd /auth/passwd.txt --admin-users c2 --presence"]
+    entrypoint: ["sh", "-c", "ip route add 10.231.1.0/24 via 10.231.0.254 && exec /usr/local/bin/mqdb agent start --bind 0.0.0.0:1883 --db /data --passwd /auth/passwd.txt --acl /auth/acl.txt --admin-users c2 --presence"]
     networks:
       c2net:
         ipv4_address: 10.231.0.2

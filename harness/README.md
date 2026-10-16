@@ -68,7 +68,7 @@ A stopped node sends MQTT `DISCONNECT`, so its event is not marked unexpected. A
 
 ## Broker image
 
-The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem), and this feature build requires an auth method. `mqdb.Dockerfile` repackages the mqdb binary onto Alpine and bakes in a POC-only password (`c2` / `c2pass`); the broker runs with `--passwd` and `--admin-users c2` and no ACL file (an ACL denied the broker's own internal `$DB/#` handler; mqdb-cli 0.8.52, with mqdb-agent 0.8.37, fixes that, and this image is mqdb 0.8.39). Nodes authenticate with those credentials.
+The upstream MQDB image is `FROM scratch` (binary only, no writable filesystem), and this feature build requires an auth method. `mqdb.Dockerfile` repackages the mqdb binary onto Alpine and bakes in a POC-only password (`c2` / `c2pass`); the broker runs with `--passwd`, `--admin-users c2` and `--acl /auth/acl.txt`. The ACL grants `c2` only the topics the harness uses: `$DB/#` for the store and peer registry, `p2p/#` for signaling, `mqp2p/responses/#` for mqp2p's request replies and `mqdb-cli/responses/#` for the `mqdb` CLI calls in the scripts; any other topic is denied. It needs mqdb 0.8.52 (mqdb-agent 0.8.37) or later, because older brokers apply the ACL to their own internal `$DB/#` handler and deny it; `common.sh` builds `mqdb:poc` only when it is missing, so remove an older `mqdb:poc` image before running. Nodes authenticate with those credentials.
 
 ## Bearer shaping
 
