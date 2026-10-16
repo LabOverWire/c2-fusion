@@ -183,10 +183,16 @@ async fn join_mesh(
     settings: MeshSettings,
     node: SyncNode,
     joined: watch::Sender<Option<Arc<Peer>>>,
-) -> Swarm {
+) -> (Swarm, Arc<Peer>) {
     let peer = Arc::new(connect_and_register(&settings).await);
     joined.send_replace(Some(Arc::clone(&peer)));
-    Swarm::spawn_with_discovery_interval(peer, node, settings.pull, settings.discovery)
+    let swarm = Swarm::spawn_with_discovery_interval(
+        Arc::clone(&peer),
+        node,
+        settings.pull,
+        settings.discovery,
+    );
+    (swarm, peer)
 }
 
 async fn take_inbox_file(store: &Store, registry: &Registry, name: &str, fmt: &str, path: &Path) {
@@ -460,8 +466,9 @@ async fn main() -> Result<()> {
     }
     tasks.shutdown().await;
     mesh.abort();
-    if let Ok(swarm) = mesh.await {
+    if let Ok((swarm, peer)) = mesh.await {
         swarm.abort();
+        peer.disconnect().await;
     }
     if let Some(telemetry) = telemetry {
         telemetry.shutdown()?;
