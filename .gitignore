@@ -3,3 +3,4 @@
 .DS_Store
 harness/run/
 __pycache__/
+harness/airtime.pcap
