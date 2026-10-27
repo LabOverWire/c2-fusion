@@ -115,7 +115,7 @@ satcom   rate 256kbit delay 300ms 40ms      1%    0.8 0.7 0.8%     1.8 1.0 1.1% 
 
 ### HF
 
-At the default intervals the HF profile (rate 2400 bit/s, delay 250 ms ± 100 ms) does not converge within 120 seconds even without loss: with no messages flowing the edge already sends about 55 kbit/s (measured before the router was added, on edge's egress alone), more than twenty times the profile's rate, so the queue saturates. The likely sources are the 200 ms sync pull, the 200 ms discovery poll at the time, presence lease renewals and broker signalling; the traffic has not been broken down by source.
+At the default intervals the HF profile (rate 2400 bit/s, delay 250 ms ± 100 ms) does not converge within 120 seconds even without loss: with no messages flowing the edge already sends about 55 kbit/s (measured before the router was added, on edge's egress alone), more than twenty times the profile's rate, so the queue saturates. The likely sources are the 200 ms sync pull, the 200 ms discovery poll at the time, presence lease renewals and broker signalling; the idle traffic at the HF cadence is broken down by source below.
 
 `C2_PULL_MS` sets the sync pull interval (default 200 ms), `C2_DISCOVERY_MS` how often a node asks the broker for peers (default 2000 ms) and `C2_LEASE_SECS` the presence lease (default 6 s, renewed at a third of it). The HF profile with the pull and discovery intervals at 30000 ms, the cadence the LoRa bearer uses, and the lease at 6 s and at 90 s (2026-10-11, through the router):
 
@@ -127,7 +127,37 @@ lease  loss  from_edge           to_edge             packets      avg_bytes_pkt 
 90 s   15%   29.2 16.2 10.0%     11.8 7.1 0.0%       41 65 33     126-166        1.79 2.98 4.54
 ```
 
-Every contact converged within 4.6 seconds, with and without loss. A new write is pushed to connected peers immediately, so the pull interval governs catch-up after a partition rather than delivery latency. Without loss the 90-second lease lowers the traffic on the link from 70 to 113 packets per 30 seconds to 53 to 68; the rest is likely broker keepalives and the remaining sync exchanges, not yet broken down. These runs predate deriving the MQTT keepalive from the lease (it was mqtt5's 60 s default), so the packet counts with a 6 s lease now include a ping every 2 s. With so few packets per window, the measured loss scatters widely around the configured 15 percent.
+Every contact converged within 4.6 seconds, with and without loss. A new write is pushed to connected peers immediately, so the pull interval governs catch-up after a partition rather than delivery latency. Without loss the 90-second lease lowers the traffic on the link from 70 to 113 packets per 30 seconds to 53 to 68; the breakdown below shows where the rest goes. These runs predate deriving the MQTT keepalive from the lease (it was mqtt5's 60 s default); with the keepalive at a third of the lease, a 6 s lease no longer holds a connection on HF (below). With so few packets per window, the measured loss scatters widely around the configured 15 percent.
+
+### HF idle traffic by source
+
+`./airtime.sh` brings the stack up, shapes the edge link with the HF rate and delay (no loss) in both directions, waits `AIRTIME_SETTLE` seconds (default 30), captures `AIRTIME_WINDOW` seconds (default 120) on the edge side of the router with no messages flowing, and writes the capture to `harness/airtime.pcap` (`AIRTIME_OUT` changes it). It runs the pull and discovery intervals at 30000 ms and the lease at 6 s unless `C2_PULL_MS`, `C2_DISCOVERY_MS` or `C2_LEASE_SECS` say otherwise, and `AIRTIME_PROFILE` replaces the netem parameters. `python3 airtime-report.py <capture> <window_s>` attributes every frame with `tshark`: MQTT by message type and topic (the broker connection is plain MQTT), QUIC by peer (the sync sessions are encrypted, so only their size and timing are visible), and TCP overhead separately. Byte counts are Ethernet frames, so each packet carries 14 bytes that a radio link would not.
+
+Run on 2026-10-17 at c2-fusion d63089d (stitch-rs 4b434ef, mqdb 0.8.52), 90 s settle and 300 s window:
+
+| Lease (keepalive) | From edge | To edge | MQTT connections opened |
+|---|---|---|---|
+| 6 s (2 s) | 1479 bit/s | 1242 bit/s | 10 |
+| 90 s (30 s) | 603 bit/s | 769 bit/s | 0 |
+
+With the 6 s lease the MQTT keepalive is 2 s, and on HF the broker closes the connection within seconds: queueing behind other traffic at 2400 bit/s, with 250 ms of delay each way, leaves gaps longer than the 1.5 keepalive periods the broker allows. Each of the 10 reconnects costs the TCP handshake (with SYN retries), CONNECT, resubscribing to the signaling topics and renewing or re-creating the peer record, and together they double the idle traffic. On HF the keepalive needs to stay well above the round trip under load; a longer lease gives that, since the keepalive follows it, and mqp2p's `PeerConfig::with_keepalive_secs` can set it independently.
+
+With the 90 s lease the connection holds for the whole window, and the idle traffic splits as follows (both directions, 1372 bit/s in total):
+
+| Source | Share | bit/s |
+|---|---|---|
+| Presence and discovery requests to the broker (lease renewals every 30 s, peer lists every discovery interval, their replies, and a subscribe and unsubscribe around each) | 50% | 685 |
+| TCP acknowledgements and retransmissions on the broker connection | 14% | 187 |
+| MQTT keepalive pings | 4% | 49 |
+| QUIC sync sessions to relay and hq | 33% | 446 |
+
+Three things make the broker requests expensive on HF:
+
+- mqp2p subscribes to a fresh response topic before each request and unsubscribes after it, which adds four packets (about 400 bytes) and a full round trip (2.3 s in this run) to every renewal and every peer list.
+- The replies carry whole records. A lease renewal gets the renewed record back (531 bytes) though only success matters, and a peer list returns every peer, including the caller, with a 95-character certificate fingerprint each (1078 bytes, 3.6 s of serialization at 2400 bit/s).
+- mqp2p waits 5 s for a reply, which is less than a request takes on HF when a peer list and a renewal queue behind each other. At 210 s both requests timed out, their replies arrived after the unsubscribe, and the failed renewal made edge re-create its peer record.
+
+The QUIC sync sessions exchange about 6 packets per peer per 30 s pull (about 140 bytes each) when the peers are already in sync, which is the cost that suppressing exchanges between peers in sync would remove.
 
 ## Monitoring
 
@@ -194,6 +224,7 @@ RESTART PASSED: SIGTERM stop, picture restored from the store, post-restart writ
 ./monitoring.sh
 ./events.sh
 ./restart.sh
+./airtime.sh
 ```
 
-Requires Docker. `run.sh` and `loss.sh` build the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, the router image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), bring the stack up, run their sequence, and tear everything down; `evidence.sh` reuses the images they built.
+Requires Docker. `run.sh` and `loss.sh` build the MQDB broker image (from the sibling MQDB repo, skipped if already present), the Alpine-repackaged broker image, the router image, and the `c2-node` image (whose sibling crates are fetched as git dependencies), bring the stack up, run their sequence, and tear everything down; `evidence.sh` reuses the images they built. `airtime-report.py` needs `tshark` on the host.
